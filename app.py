@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -7,6 +8,14 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Inject Streamlit Cloud secrets into os.environ so all modules work unchanged
+for _k in ("FMP_API_KEY",):
+    if _k not in os.environ:
+        try:
+            os.environ[_k] = st.secrets.get(_k, "")
+        except Exception:
+            pass
 
 from screener import (
     get_sp500_tickers,
@@ -23,7 +32,7 @@ from screener import (
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="S&P 500 Screener",
+    page_title="R&S Stock Plan",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -275,7 +284,7 @@ with st.sidebar:
 # Main
 # ---------------------------------------------------------------------------
 
-st.title("S&P 500 Weekly Screener")
+st.title("R&S Stock Plan")
 st.caption("Ranks every S&P 500 stock by statistical setup quality across three holding horizons.")
 
 if run_btn:
