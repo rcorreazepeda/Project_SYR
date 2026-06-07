@@ -72,17 +72,27 @@ def run_for_timeframe(
     data: dict,
     tickers: list[str],
     top_n: int,
-) -> tuple[pd.DataFrame, bool, float]:
+) -> tuple[pd.DataFrame, bool, float, float, float]:
     cfg = TIMEFRAMES[tf_key]
     close_all  = data["close"]
     high_all   = data["high"]
     low_all    = data["low"]
     vol_all    = data["volume"]
 
-    spy_close     = close_all["SPY"].dropna()
-    in_bull       = bool(spy_close.iloc[-1] > spy_close.rolling(50).mean().iloc[-1])
-    rs_n          = cfg["rs_days"]
-    spy_return    = float(spy_close.iloc[-1] / spy_close.iloc[-rs_n] - 1) if len(spy_close) >= rs_n + 1 else 0.0
+    spy_close  = close_all["SPY"].dropna()
+    in_bull    = bool(spy_close.iloc[-1] > spy_close.rolling(50).mean().iloc[-1])
+    rs_n       = cfg["rs_days"]
+    spy_return = float(spy_close.iloc[-1] / spy_close.iloc[-rs_n] - 1) if len(spy_close) >= rs_n + 1 else 0.0
+
+    # VIX
+    vix_series = close_all["^VIX"].dropna() if "^VIX" in close_all.columns else pd.Series(dtype=float)
+    vix_val    = float(vix_series.iloc[-1]) if len(vix_series) > 0 else 20.0
+
+    # Breadth: % of S&P 500 tickers above their 50-day SMA
+    valid_tickers  = [t for t in tickers if t in close_all.columns]
+    sma50_last     = close_all[valid_tickers].rolling(50).mean().iloc[-1]
+    above_sma50    = (close_all[valid_tickers].iloc[-1] > sma50_last).sum()
+    breadth_pct    = round(above_sma50 / len(valid_tickers) * 100, 1) if valid_tickers else 50.0
 
     results = []
     for ticker in tickers:
@@ -95,7 +105,9 @@ def run_for_timeframe(
         if len(close) < cfg["min_data_days"]:
             continue
         try:
-            s, signals, meta = score_ticker(close, high, low, volume, spy_return, in_bull, cfg)
+            s, signals, meta = score_ticker(
+                close, high, low, volume, spy_return, in_bull, cfg, vix_val, breadth_pct
+            )
             results.append({"ticker": ticker, "score": s, "signals": signals, **meta})
         except Exception:
             continue
@@ -108,7 +120,7 @@ def run_for_timeframe(
     near_earnings  = check_earnings_proximity(top_candidates)
     df["earnings_soon"] = df["ticker"].isin(near_earnings)
 
-    return df, in_bull, spy_return
+    return df, in_bull, spy_return, vix_val, breadth_pct
 
 
 # ---------------------------------------------------------------------------
@@ -123,26 +135,52 @@ def render_tab(tf_key: str, data: dict, tickers: list[str],
     key_bull = f"bull_{tf_key}"
     key_spy  = f"spy_{tf_key}"
 
+    key_vix     = f"vix_{tf_key}"
+    key_breadth = f"breadth_{tf_key}"
+
     if key_df not in st.session_state:
         with st.spinner(f"Scoring {len(tickers)} stocks for {cfg['label']} view…"):
-            df, in_bull, spy_ret = run_for_timeframe(tf_key, data, tickers, top_n)
-        st.session_state[key_df]   = df
-        st.session_state[key_bull] = in_bull
-        st.session_state[key_spy]  = spy_ret
+            df, in_bull, spy_ret, vix_val, breadth_pct = run_for_timeframe(tf_key, data, tickers, top_n)
+        st.session_state[key_df]      = df
+        st.session_state[key_bull]    = in_bull
+        st.session_state[key_spy]     = spy_ret
+        st.session_state[key_vix]     = vix_val
+        st.session_state[key_breadth] = breadth_pct
 
-    df      = st.session_state[key_df]
-    in_bull = st.session_state[key_bull]
-    spy_ret = st.session_state[key_spy]
+    df          = st.session_state[key_df]
+    in_bull     = st.session_state[key_bull]
+    spy_ret     = st.session_state[key_spy]
+    vix_val     = st.session_state.get(key_vix, 20.0)
+    breadth_pct = st.session_state.get(key_breadth, 50.0)
 
     # --- Regime row ---
-    icon  = "🟢" if in_bull else "🔴"
-    label = "BULL" if in_bull else "BEAR"
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Market Regime", f"{icon} {label}",
+    regime_icon  = "🟢" if in_bull else "🔴"
+    regime_label = "BULL" if in_bull else "BEAR"
+
+    if vix_val > 35:
+        vix_icon, vix_label = "🔴", "Panic"
+    elif vix_val > 25:
+        vix_icon, vix_label = "🟠", "Fear"
+    elif vix_val < 15:
+        vix_icon, vix_label = "🟡", "Complacent"
+    else:
+        vix_icon, vix_label = "🟢", "Normal"
+
+    if breadth_pct > 65:
+        breadth_icon, breadth_label = "🟢", "Strong"
+    elif breadth_pct < 40:
+        breadth_icon, breadth_label = "🔴", "Weak"
+    else:
+        breadth_icon, breadth_label = "🟡", "Moderate"
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Market Regime", f"{regime_icon} {regime_label}",
               "SPY above 50-SMA" if in_bull else "SPY below 50-SMA")
     c2.metric(f"SPY {cfg['rs_days']}d Return", f"{spy_ret * 100:+.1f}%")
-    c3.metric("Stocks Scored", str(len(df)))
-    c4.metric("Hold Period", f"{cfg['hold_days']} trading days",
+    c3.metric("VIX", f"{vix_icon} {vix_val:.1f}", vix_label)
+    c4.metric("Breadth", f"{breadth_icon} {breadth_pct:.0f}%", f"{breadth_label} — % above SMA50")
+    c5.metric("Stocks Scored", str(len(df)))
+    c6.metric("Hold Period", f"{cfg['hold_days']} trading days",
               f"TP +{cfg['take_profit_pct']}% / SL -{cfg['stop_loss_pct']}%")
 
     if not in_bull:
@@ -295,6 +333,8 @@ if run_btn:
     for key in ["df_5d", "df_30d", "df_180d",
                 "bull_5d", "bull_30d", "bull_180d",
                 "spy_5d",  "spy_30d",  "spy_180d",
+                "vix_5d",  "vix_30d",  "vix_180d",
+                "breadth_5d", "breadth_30d", "breadth_180d",
                 "tickers", "raw_data"]:
         st.session_state.pop(key, None)
     st.session_state["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -305,7 +345,7 @@ if "raw_data" not in st.session_state:
         st.stop()
 
     tickers = get_sp500_tickers()
-    download_list = tuple(["SPY"] + tickers)
+    download_list = tuple(["SPY", "^VIX"] + tickers)
     with st.spinner("Downloading 2 years of price data for 500+ stocks… (cached after first run)"):
         raw = download_data(download_list)
 

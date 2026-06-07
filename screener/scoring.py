@@ -10,6 +10,8 @@ def score_ticker(
     spy_return: float,
     in_bull: bool,
     cfg: dict,
+    vix_val: float = 20.0,
+    breadth_pct: float = 50.0,
 ) -> tuple[int, list[str], dict]:
     signals: list[str] = []
     score = 0
@@ -133,6 +135,25 @@ def score_ticker(
         elif rs < 0.7:
             score -= 10
             signals.append(f"RS vs SPY {rs:.1f}× — laggard (penalty)")
+
+    # --- VIX sentiment ---
+    if vix_val > 35:
+        score -= 10
+        signals.append(f"VIX {vix_val:.0f} — market panic, high risk of continued selling")
+    elif vix_val > 25:
+        score += 8
+        signals.append(f"VIX {vix_val:.0f} — elevated fear, mean-reversion setups favored")
+    elif vix_val < 15:
+        score -= 5
+        signals.append(f"VIX {vix_val:.0f} — complacency, mean-reversion odds reduced")
+
+    # --- Market breadth ---
+    if breadth_pct > 65:
+        score += 10
+        signals.append(f"Breadth {breadth_pct:.0f}% above SMA50 — broad market participation")
+    elif breadth_pct < 40:
+        score -= 8
+        signals.append(f"Breadth {breadth_pct:.0f}% above SMA50 — narrow market, selective risk")
 
     meta = {
         "price":     round(price, 2),
