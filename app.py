@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Inject Streamlit Cloud secrets into os.environ so all modules work unchanged
-for _k in ("FMP_API_KEY",):
+for _k in ("FMP_API_KEY", "ANTHROPIC_API_KEY"):
     if _k not in os.environ:
         try:
             os.environ[_k] = st.secrets.get(_k, "")
@@ -25,6 +25,8 @@ from screener import (
     bollinger,
     TIMEFRAMES,
     DOWNLOAD_LOOKBACK,
+    fetch_recent_news,
+    classify_news,
 )
 
 # ---------------------------------------------------------------------------
@@ -303,6 +305,102 @@ def render_tab(tf_key: str, data: dict, tickers: list[str],
 
 
 # ---------------------------------------------------------------------------
+# News tab renderer
+# ---------------------------------------------------------------------------
+
+SENTIMENT_STYLE = {
+    "GOOD":    ("🟢", "#1a3a1a", "#4caf50"),
+    "BAD":     ("🔴", "#3a1a1a", "#ef5350"),
+    "NEUTRAL": ("⚪", "#2a2a2a", "#9e9e9e"),
+}
+
+
+def render_news_tab() -> None:
+    st.subheader("News Sentiment — Last 3 Days")
+    st.caption("Fetches recent headlines via Yahoo Finance and classifies each one with Claude Haiku.")
+
+    has_data = any(f"df_{tf}" in st.session_state for tf in ["5d", "30d", "180d"])
+    if not has_data:
+        st.info("Run the screener first to see news for your top picks.")
+        return
+
+    available = {
+        TIMEFRAMES[tf]["label"]: tf
+        for tf in ["5d", "30d", "180d"]
+        if f"df_{tf}" in st.session_state
+    }
+    selected_label = st.selectbox("Timeframe", list(available.keys()), key="news_tf_select")
+    selected_tf    = available[selected_label]
+
+    n_stocks = st.slider("Stocks to analyze", 1, 10, 5, key="news_n_stocks")
+
+    if st.button("Fetch & Classify News", type="primary", key="news_fetch_btn"):
+        df      = st.session_state[f"df_{selected_tf}"]
+        tickers = df.head(n_stocks)["ticker"].tolist()
+
+        with st.spinner("Fetching headlines from Yahoo Finance…"):
+            news_by_ticker = fetch_recent_news(tickers, days=3)
+
+        results: dict[str, list[dict]] = {}
+        progress = st.progress(0, text="Classifying with Claude Haiku…")
+        for i, ticker in enumerate(tickers):
+            articles = news_by_ticker.get(ticker, [])
+            try:
+                results[ticker] = classify_news(ticker, articles)
+            except EnvironmentError as e:
+                st.error(f"Setup error: {e}")
+                return
+            except Exception as e:
+                results[ticker] = articles
+                st.warning(f"{ticker}: classification failed — {e}")
+            progress.progress((i + 1) / len(tickers), text=f"Classified {ticker}")
+        progress.empty()
+
+        st.session_state["news_results"]    = results
+        st.session_state["news_tf_label"]   = selected_label
+
+    if "news_results" not in st.session_state:
+        return
+
+    results    = st.session_state["news_results"]
+    tf_label   = st.session_state.get("news_tf_label", selected_label)
+    st.caption(f"Showing top-{len(results)} picks from {tf_label} screener — last 3 days")
+
+    for ticker, articles in results.items():
+        good    = sum(1 for a in articles if a["sentiment"] == "GOOD")
+        bad     = sum(1 for a in articles if a["sentiment"] == "BAD")
+        neutral = sum(1 for a in articles if a["sentiment"] == "NEUTRAL")
+        total   = len(articles)
+
+        if total == 0:
+            summary = "No news in last 3 days"
+        elif bad > good:
+            summary = f"🔴 {bad} bad · {good} good · {neutral} neutral"
+        elif good > bad:
+            summary = f"🟢 {good} good · {bad} bad · {neutral} neutral"
+        else:
+            summary = f"⚪ Mixed — {good} good · {bad} bad · {neutral} neutral"
+
+        with st.expander(f"**{ticker}** — {total} articles  {summary}", expanded=True):
+            if total == 0:
+                st.markdown("_No recent headlines found._")
+                continue
+
+            for article in articles:
+                icon, bg, border = SENTIMENT_STYLE.get(article["sentiment"], SENTIMENT_STYLE["NEUTRAL"])
+                reason = f" — {article['reason']}" if article["reason"] else ""
+                st.markdown(
+                    f"""<div style="background:{bg}; border-left:4px solid {border};
+                    padding:8px 12px; margin:4px 0; border-radius:4px;">
+                    {icon} <strong>{article['title']}</strong>{reason}<br>
+                    <small style="color:#aaa;">{article['publisher']} · {article['published']}
+                    &nbsp;·&nbsp; <a href="{article['link']}" target="_blank"
+                    style="color:#aaa;">Read →</a></small></div>""",
+                    unsafe_allow_html=True,
+                )
+
+
+# ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
 
@@ -359,7 +457,9 @@ if "raw_data" not in st.session_state:
 raw_data = st.session_state["raw_data"]
 tickers  = st.session_state["tickers"]
 
-tab1, tab2, tab3 = st.tabs(["📅 5-Day Trading", "📆 30-Day Trading", "📈 180-Day Trading"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📅 5-Day Trading", "📆 30-Day Trading", "📈 180-Day Trading", "📰 News"
+])
 
 with tab1:
     render_tab("5d",  raw_data, tickers, top_n, min_score, tax_rate)
@@ -369,3 +469,6 @@ with tab2:
 
 with tab3:
     render_tab("180d", raw_data, tickers, top_n, min_score, tax_rate)
+
+with tab4:
+    render_news_tab()
