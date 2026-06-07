@@ -116,7 +116,7 @@ def run_for_timeframe(
 # ---------------------------------------------------------------------------
 
 def render_tab(tf_key: str, data: dict, tickers: list[str],
-               top_n: int, min_score: int) -> None:
+               top_n: int, min_score: int, tax_rate: int = 0) -> None:
     cfg = TIMEFRAMES[tf_key]
 
     key_df   = f"df_{tf_key}"
@@ -154,6 +154,7 @@ def render_tab(tf_key: str, data: dict, tickers: list[str],
     filtered = df[df["score"] >= min_score].head(top_n).copy()
     filtered["Top Signals"] = filtered["signals"].apply(lambda s: "  ·  ".join(s[:3]))
     filtered["Earnings"]    = filtered["earnings_soon"].apply(lambda x: "⚠ Soon" if x else "—")
+    filtered["After-Tax Return"] = filtered["expected_return_%"] * (1 - tax_rate / 100)
     sf, ss = cfg["sma_fast"], cfg["sma_slow"]
 
     table = filtered.rename(columns={
@@ -167,21 +168,22 @@ def render_tab(tf_key: str, data: dict, tickers: list[str],
         "vol_ratio":        "Vol ×",
         "atr":              "ATR",
     })[["Ticker", "Score", "Entry Price", f"Expected ({cfg['hold_days']}d)",
-        "Exp. Return", "RSI", "Stoch %K", "Vol ×", "Earnings", "Top Signals"]]
+        "Exp. Return", "After-Tax Return", "RSI", "Stoch %K", "Vol ×", "Earnings", "Top Signals"]]
 
     st.subheader(f"Top {len(filtered)} setups — {cfg['label']} — {datetime.now().strftime('%Y-%m-%d')}")
     st.dataframe(
         table,
         use_container_width=True,
         column_config={
-            "Score":                       st.column_config.ProgressColumn("Score", min_value=0, max_value=120, format="%d"),
-            "Entry Price":                 st.column_config.NumberColumn("Entry Price", format="$%.2f"),
+            "Score":                           st.column_config.ProgressColumn("Score", min_value=0, max_value=120, format="%d"),
+            "Entry Price":                     st.column_config.NumberColumn("Entry Price", format="$%.2f"),
             f"Expected ({cfg['hold_days']}d)": st.column_config.NumberColumn(f"Expected ({cfg['hold_days']}d)", format="$%.2f"),
-            "Exp. Return":                 st.column_config.NumberColumn("Exp. Return", format="+%.2f%%"),
-            "RSI":                         st.column_config.NumberColumn("RSI", format="%.1f"),
-            "Stoch %K":                    st.column_config.NumberColumn("Stoch %K", format="%.1f"),
-            "Vol ×":                       st.column_config.NumberColumn("Vol ×", format="%.2f×"),
-            "ATR":                         st.column_config.NumberColumn("ATR", format="$%.2f"),
+            "Exp. Return":                     st.column_config.NumberColumn("Exp. Return", format="+%.2f%%"),
+            "After-Tax Return":                st.column_config.NumberColumn(f"After-Tax ({tax_rate}%)", format="+%.2f%%"),
+            "RSI":                             st.column_config.NumberColumn("RSI", format="%.1f"),
+            "Stoch %K":                        st.column_config.NumberColumn("Stoch %K", format="%.1f"),
+            "Vol ×":                           st.column_config.NumberColumn("Vol ×", format="%.2f×"),
+            "ATR":                             st.column_config.NumberColumn("ATR", format="$%.2f"),
         },
     )
 
@@ -274,6 +276,7 @@ with st.sidebar:
     st.divider()
     top_n     = st.slider("Top N results", 5, 25, 10)
     min_score = st.slider("Min score filter", 0, 100, 0)
+    tax_rate  = st.slider("Capital gains tax rate %", 0, 50, 25)
     st.divider()
     if "last_run" in st.session_state:
         st.caption(f"Last run: {st.session_state['last_run']}")
@@ -319,10 +322,10 @@ tickers  = st.session_state["tickers"]
 tab1, tab2, tab3 = st.tabs(["📅 5-Day Trading", "📆 30-Day Trading", "📈 180-Day Trading"])
 
 with tab1:
-    render_tab("5d",  raw_data, tickers, top_n, min_score)
+    render_tab("5d",  raw_data, tickers, top_n, min_score, tax_rate)
 
 with tab2:
-    render_tab("30d", raw_data, tickers, top_n, min_score)
+    render_tab("30d", raw_data, tickers, top_n, min_score, tax_rate)
 
 with tab3:
-    render_tab("180d", raw_data, tickers, top_n, min_score)
+    render_tab("180d", raw_data, tickers, top_n, min_score, tax_rate)
