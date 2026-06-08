@@ -37,7 +37,7 @@ def _fetch_wikipedia() -> list[str]:
         timeout=10,
     )
     resp.raise_for_status()
-    table = pd.read_html(resp.text)[0]
+    table = pd.read_html(io.StringIO(resp.text))[0]
     return table["Symbol"].str.replace(".", "-", regex=False).tolist()
 
 
