@@ -1,3 +1,5 @@
+import io
+import requests
 import pandas as pd
 
 GICS_TO_ETF: dict[str, str] = {
@@ -20,11 +22,13 @@ SECTOR_ETFS = list(set(GICS_TO_ETF.values()))
 def get_ticker_sector_etf_map() -> dict[str, str]:
     """Return {ticker: sector_etf} for S&P 500 tickers via Wikipedia table."""
     try:
-        tables = pd.read_html(
+        resp = requests.get(
             "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-            attrs={"id": "constituents"},
-            storage_options={"User-Agent": "Mozilla/5.0"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
         )
+        resp.raise_for_status()
+        tables = pd.read_html(io.StringIO(resp.text), attrs={"id": "constituents"})
         df = tables[0]
         result: dict[str, str] = {}
         for _, row in df.iterrows():
