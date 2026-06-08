@@ -27,6 +27,8 @@ from screener import (
     DOWNLOAD_LOOKBACK,
     fetch_recent_news,
     classify_news,
+    get_ticker_sector_etf_map,
+    SECTOR_ETFS,
 )
 
 # ---------------------------------------------------------------------------
@@ -96,6 +98,9 @@ def run_for_timeframe(
     above_sma50    = (close_all[valid_tickers].iloc[-1] > sma50_last).sum()
     breadth_pct    = round(above_sma50 / len(valid_tickers) * 100, 1) if valid_tickers else 50.0
 
+    # Sector ETF map
+    sector_map = st.session_state.get("sector_map", {})
+
     results = []
     for ticker in tickers:
         if ticker not in close_all.columns:
@@ -107,8 +112,17 @@ def run_for_timeframe(
         if len(close) < cfg["min_data_days"]:
             continue
         try:
+            sector_etf = sector_map.get(ticker, "")
+            if sector_etf and sector_etf in close_all.columns:
+                sec_close      = close_all[sector_etf].dropna()
+                sector_return  = float(sec_close.iloc[-1] / sec_close.iloc[-rs_n] - 1) \
+                                 if len(sec_close) >= rs_n + 1 else 0.0
+            else:
+                sector_return = 0.0
+
             s, signals, meta = score_ticker(
-                close, high, low, volume, spy_return, in_bull, cfg, vix_val, breadth_pct
+                close, high, low, volume, spy_return, in_bull, cfg,
+                vix_val, breadth_pct, sector_return, sector_etf,
             )
             results.append({"ticker": ticker, "score": s, "signals": signals, **meta})
         except Exception:
@@ -433,7 +447,7 @@ if run_btn:
                 "spy_5d",  "spy_30d",  "spy_180d",
                 "vix_5d",  "vix_30d",  "vix_180d",
                 "breadth_5d", "breadth_30d", "breadth_180d",
-                "tickers", "raw_data"]:
+                "tickers", "raw_data", "sector_map"]:
         st.session_state.pop(key, None)
     st.session_state["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -443,13 +457,16 @@ if "raw_data" not in st.session_state:
         st.stop()
 
     tickers = get_sp500_tickers()
-    download_list = tuple(["SPY", "^VIX"] + tickers)
+    download_list = tuple(["SPY", "^VIX"] + SECTOR_ETFS + tickers)
     with st.spinner("Downloading 2 years of price data for 500+ stocks… (cached after first run)"):
         raw = download_data(download_list)
 
     if raw["close"].empty:
         st.error("Download returned no data. Check your internet connection.")
         st.stop()
+
+    with st.spinner("Building sector ETF map…"):
+        st.session_state["sector_map"] = get_ticker_sector_etf_map()
 
     st.session_state["raw_data"] = raw
     st.session_state["tickers"]  = tickers

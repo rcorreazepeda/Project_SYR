@@ -12,6 +12,8 @@ def score_ticker(
     cfg: dict,
     vix_val: float = 20.0,
     breadth_pct: float = 50.0,
+    sector_return: float = 0.0,
+    sector_etf: str = "",
 ) -> tuple[int, list[str], dict]:
     signals: list[str] = []
     score = 0
@@ -121,20 +123,37 @@ def score_ticker(
         elif mom_atr < 0 and rsi_val >= 50:
             score -= 5
 
-    # --- Relative strength vs SPY ---
+    # --- Relative strength ---
     rs_n = cfg["rs_days"]
-    if len(close) >= rs_n + 1 and spy_return != 0:
+    if len(close) >= rs_n + 1:
         stock_ret = close.iloc[-1] / close.iloc[-rs_n] - 1
-        rs = stock_ret / spy_return if spy_return > 0 else -stock_ret / abs(spy_return)
-        if rs >= 1.3:
-            score += cfg["score_rs_leader"]
-            signals.append(f"RS vs SPY {rs:.1f}× — market leader")
-        elif rs >= 1.0:
-            score += cfg["score_rs_outperform"]
-            signals.append(f"RS vs SPY {rs:.1f}× — outperforming")
-        elif rs < 0.7:
-            score -= 10
-            signals.append(f"RS vs SPY {rs:.1f}× — laggard (penalty)")
+
+        # vs SPY
+        if spy_return != 0:
+            rs_spy = stock_ret / spy_return if spy_return > 0 else -stock_ret / abs(spy_return)
+            if rs_spy >= 1.3:
+                score += cfg["score_rs_leader"]
+                signals.append(f"RS vs SPY {rs_spy:.1f}× — market leader")
+            elif rs_spy >= 1.0:
+                score += cfg["score_rs_outperform"]
+                signals.append(f"RS vs SPY {rs_spy:.1f}× — outperforming")
+            elif rs_spy < 0.7:
+                score -= 10
+                signals.append(f"RS vs SPY {rs_spy:.1f}× — laggard (penalty)")
+
+        # vs Sector ETF
+        if sector_return != 0:
+            rs_sec = stock_ret / sector_return if sector_return > 0 else -stock_ret / abs(sector_return)
+            label  = sector_etf if sector_etf else "sector"
+            if rs_sec >= 1.3:
+                score += 12
+                signals.append(f"RS vs {label} {rs_sec:.1f}× — sector leader")
+            elif rs_sec >= 1.0:
+                score += 6
+                signals.append(f"RS vs {label} {rs_sec:.1f}× — outperforming sector")
+            elif rs_sec < 0.7:
+                score -= 8
+                signals.append(f"RS vs {label} {rs_sec:.1f}× — sector laggard (penalty)")
 
     # --- VIX sentiment ---
     if vix_val > 35:
