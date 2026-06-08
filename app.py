@@ -93,10 +93,12 @@ def run_for_timeframe(
     vix_val    = float(vix_series.iloc[-1]) if len(vix_series) > 0 else 20.0
 
     # Breadth: % of S&P 500 tickers above their 50-day SMA
+    # ffill() ensures weekends/holidays don't produce NaN last-row comparisons
     valid_tickers  = [t for t in tickers if t in close_all.columns]
-    sma50_last     = close_all[valid_tickers].rolling(50).mean().iloc[-1]
-    above_sma50    = (close_all[valid_tickers].iloc[-1] > sma50_last).sum()
-    breadth_pct    = round(above_sma50 / len(valid_tickers) * 100, 1) if valid_tickers else 50.0
+    filled         = close_all[valid_tickers].ffill()
+    sma50_last     = filled.rolling(50).mean().iloc[-1]
+    above_sma50    = (filled.iloc[-1] > sma50_last).sum()
+    breadth_pct    = round(float(above_sma50) / len(valid_tickers) * 100, 1) if valid_tickers else 50.0
 
     # Sector ETF map
     sector_map = st.session_state.get("sector_map", {})
