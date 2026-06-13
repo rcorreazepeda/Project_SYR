@@ -1,125 +1,122 @@
-# S&P 500 Multi-Timeframe Screener
+# R&S Stock Plan — S&P 500 Multi-Timeframe Screener
 
-Ranks all S&P 500 stocks by technical setup quality across **three holding horizons** — 5-day swing, 30-day position, and 180-day trend. Targets statistically likely positive returns within each window.
+Ranks all S&P 500 stocks by technical setup quality across **three holding horizons** — 5-day swing, 30-day position, and 180-day trend. Runs automatically every weekday at 4:30 PM ET and saves results to a database for historical tracking.
+
+Live app: **https://projectsyr.streamlit.app/**
 
 ---
 
-## Folder Structure
+## What it does
+
+- Scores every S&P 500 stock using RSI, MACD, Bollinger Bands, OBV, volume, ATR momentum, relative strength vs SPY and sector ETFs, VIX sentiment, and market breadth
+- Blends in **news sentiment** (Claude Haiku classifies last 3 days of headlines — GOOD/BAD/NEUTRAL) into a combined score
+- Runs **automatically Mon-Fri at 4:30 PM ET** via GitHub Actions, saves picks to Supabase
+- **Claude Sonnet analyzes** each daily run — reviews signal accuracy vs prior picks and suggests scoring improvements
+- **Portfolio tab** — track your actual trades with live P&L vs screener targets
+- **Performance tab** — screener accuracy history and AI analysis from each daily run
+
+---
+
+## Folder structure
 
 ```
 Project_SYR/
-├── app.py                      # Streamlit UI — run this every Sunday
-├── cli.py                      # Terminal runner (optional, no browser needed)
-├── screener/                   # Core engine (Python package)
-│   ├── __init__.py             # Public API exports
-│   ├── config.py               # Timeframe configurations & scoring weights
-│   ├── universe.py             # S&P 500 ticker fetching (SPDR → Wikipedia → fallback)
-│   ├── indicators.py           # RSI, MACD, Bollinger, Stochastic, ATR, OBV
-│   ├── scoring.py              # Parameterized score_ticker() used by all timeframes
-│   ├── forecast.py             # Expected price calculation (ATR + mean-reversion blend)
-│   └── earnings.py             # Earnings proximity check (FMP API → yfinance fallback)
+├── app.py                         # Streamlit UI — 6 tabs
+├── daily_job.py                   # GitHub Actions scheduled runner
+├── cli.py                         # Terminal runner (CSV output)
+├── screener/
+│   ├── __init__.py                # Public API exports
+│   ├── config.py                  # Timeframe configs & scoring weights
+│   ├── universe.py                # S&P 500 tickers (SPDR → Wikipedia → fallback)
+│   ├── indicators.py              # RSI, MACD, Bollinger, Stochastic, ATR, OBV
+│   ├── scoring.py                 # score_ticker() — core scoring engine
+│   ├── forecast.py                # Expected price target (ATR + mean-reversion)
+│   ├── earnings.py                # Earnings proximity check
+│   ├── news.py                    # Fetch headlines + Claude classification + news score
+│   ├── sectors.py                 # Maps tickers to SPDR sector ETFs (XLK, XLF…)
+│   └── database.py                # Supabase read/write helpers
+├── .github/
+│   └── workflows/
+│       └── daily_screener.yml     # Cron job — Mon-Fri 4:30 PM ET
 ├── pages/
-│   └── 1_📖_Metrics_Guide.py  # In-app explanation of every metric
-├── .env                        # API keys — never commit this
-├── .gitignore
+│   └── 1_📖_Metrics_Guide.py     # In-app explanation of every metric
+├── .env                           # API keys — never commit
 ├── requirements.txt
 └── README.md
 ```
 
 ---
 
-## One-Time Setup
+## Tabs
 
-**1. Install dependencies**
-```bash
-pip install -r requirements.txt
-```
-
-**2. Set your API key in `.env`**
-```
-FMP_API_KEY=your_key_here
-```
-Free key at https://financialmodelingprep.com/developer/docs
+| Tab | What it shows |
+|-----|--------------|
+| **📅 5-Day Trading** | Short-term swing setups, TP +5% / SL −3% |
+| **📆 30-Day Trading** | Medium-term positions, TP +12% / SL −6% |
+| **📈 180-Day Trading** | Long-term trend leaders, TP +25% / SL −12% |
+| **📰 News** | Last 3 days of headlines per stock, classified by Claude Haiku |
+| **💼 Portfolio** | Upload your trades (CSV or manual), live P&L from Yahoo Finance |
+| **📊 Performance** | Screener history, most-picked stocks, AI analysis from daily runs |
 
 ---
 
-## Every Sunday — UI (Recommended)
+## The three timeframes
 
-```bash
-streamlit run app.py
-```
-Opens at http://localhost:8501
-
-1. Click **Run Screener** in the sidebar
-2. Switch between the three tabs for each timeframe
-3. Read the regime banner, results table, and chart
+| Timeframe | Moving averages | RSI zone | RS lookback | Take profit | Stop loss |
+|-----------|----------------|----------|-------------|-------------|-----------|
+| **5-Day** | SMA20 / SMA50 | 30–50 | 1 month | +5% | −3% |
+| **30-Day** | SMA50 / SMA200 | 40–60 | 3 months | +12% | −6% |
+| **180-Day** | SMA50 / SMA200 | 45–65 | 6 months | +25% | −12% |
 
 ---
 
-## Every Sunday — CLI (Terminal only)
+## Scoring model
 
-```bash
-python cli.py              # 5-day view (default)
-python cli.py --days 30   # 30-day view
-python cli.py --days 180  # 180-day view
-```
+Each stock gets a raw technical score (0–120+). After news is fetched, a news score (−20 to +20) is blended in to produce a **combined score**.
 
-Results are also saved to `screener_results_<tf>_<date>.csv`.
+| Signal | Points |
+|--------|--------|
+| RSI in recovery zone | +15–25 |
+| Stochastic bullish crossover | +10–20 |
+| MACD bullish crossover (fresh) | +10–25 |
+| Price > SMA fast > SMA slow (uptrend) | +20–30 |
+| Golden cross SMA50 > SMA200 | +20 (180d only) |
+| Price near / below lower Bollinger Band | +5–15 |
+| OBV bullish divergence | +15–20 |
+| OBV rising (accumulation) | +10 |
+| Volume surge >1.5× | +10–15 |
+| ATR momentum in healthy range | +10 |
+| RS vs SPY — leader / outperforming | +7–25 |
+| RS vs sector ETF — leader / outperforming | +6–12 |
+| VIX 25–35 (fear, mean-reversion favored) | +8 |
+| Market breadth >65% above SMA50 | +10 |
+| VIX >35 (panic) | −10 |
+| VIX <15 (complacent) | −5 |
+| Market breadth <40% | −8 |
+| Stock lagging SPY / sector | −8 to −10 |
+| Bear regime | mean-reversion signals ×0.5 |
+| News — GOOD headline | +4 each (max +20) |
+| News — BAD headline | −6 each (min −20) |
 
----
-
-## The Three Timeframes
-
-| Tab | Hold Period | Entry | Exit | Goal |
-|-----|------------|-------|------|------|
-| **📅 5-Day** | 5 trading days | Monday open | Friday close | Short-term reversal / momentum |
-| **📆 30-Day** | ~1 calendar month | Week 1 open | ~Week 4-5 | Medium-term trend continuation |
-| **📈 180-Day** | ~6 calendar months | Month 1 | ~Month 6 | Long-term uptrend / leader stocks |
-
-Each timeframe uses different signal zones, moving average pairs, and scoring weights — all configured in `screener/config.py`.
-
-| Config | 5-Day | 30-Day | 180-Day |
-|--------|-------|--------|---------|
-| Moving averages | SMA20 / SMA50 | SMA50 / SMA200 | SMA50 / SMA200 |
-| RSI sweet spot | 30–50 | 40–60 | 45–65 |
-| Bollinger period | 20 | 20 | 50 |
-| Relative strength | 1-month vs SPY | 3-month vs SPY | 6-month vs SPY |
-| Take profit | +5% | +12% | +25% |
-| Stop loss | −3% | −6% | −12% |
-
----
-
-## Reading the Results Table
-
-| Column | What it means |
-|--------|--------------|
-| **Score** | 0–120+. Higher = more signals aligned |
-| **Entry Price** | Last Friday's closing price |
-| **Expected (Nd)** | Statistical price target at end of hold period |
-| **Exp. Return** | `(Expected − Entry) / Entry × 100%` |
-| **RSI** | 35–50 ideal for 5d; 40–60 for 30d; 45–65 for 180d |
-| **Stoch %K** | <20 and crossing up = reversal confirmed |
-| **Vol ×** | Recent volume vs average. >1.5 = conviction |
-| **Earnings** | ⚠ Soon = report within hold window — skip this stock |
-| **Top Signals** | Plain-English reasons behind the score |
+**Entry threshold:** Score ≥ 60 (bull) or ≥ 70 (bear), at least 3 signals, no earnings soon.
 
 ---
 
-## Entry Rules
+## Entry rules
 
 **Enter if:**
-- Score ≥ **60** (BULL) or ≥ **70** (BEAR)
-- At least **3 different signals** listed
-- Earnings column is **blank**
-- RSI and Stoch %K are in the correct zone for the timeframe
+- Combined score ≥ 60 (BULL) or ≥ 70 (BEAR)
+- At least 3 different signals listed
+- Earnings column is blank
+- News score is neutral or positive
 
 **Skip if:**
-- `⚠ Soon` in Earnings — unpredictable overnight gap risk
+- `⚠ Soon` in Earnings — overnight gap risk
 - RSI > 70 (overbought — chasing)
-- Only mean-reversion signals in a BEAR regime
-- Score < 60
+- News score is heavily negative (−10 or worse)
+- Bear regime with only mean-reversion signals
 
-**Best combos (in priority order):**
+**Best signal combos (priority order):**
 1. Fresh MACD crossover + RSI recovering + OBV rising/divergence
 2. Stochastic crossover from oversold + volume surge ≥ 1.5×
 3. Price > SMA fast > SMA slow + RS vs SPY ≥ 1.3×
@@ -127,26 +124,85 @@ Each timeframe uses different signal zones, moving average pairs, and scoring we
 
 ---
 
-## Position Sizing
-
-Spread across 3–5 stocks per timeframe. Never concentrate in one pick.
+## Position sizing
 
 | Score | Allocation |
 |-------|-----------|
-| 80+   | 30–35% of weekly budget |
+| 80+ | 30–35% of weekly budget |
 | 60–79 | 20–25% |
 | 40–59 | 10–15% (BULL only) |
-| < 40  | Skip |
+| < 40 | Skip |
+
+Spread across 3–5 stocks per timeframe. Never concentrate in one pick.
 
 ---
 
-## Data Sources
+## One-time local setup
+
+```bash
+pip install -r requirements.txt
+```
+
+Create `.env` in the project root:
+```
+ANTHROPIC_API_KEY=sk-ant-...
+FMP_API_KEY=...
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_KEY=eyJ...
+```
+
+Run locally:
+```bash
+streamlit run app.py        # UI at http://localhost:8501
+python cli.py               # terminal, 5-day default
+python cli.py --days 30
+python cli.py --days 180
+```
+
+---
+
+## Cloud deployment
+
+| Service | Purpose | Cost |
+|---------|---------|------|
+| Streamlit Community Cloud | Hosts the web app | Free |
+| GitHub Actions | Runs daily screener Mon-Fri 4:30 PM ET | Free |
+| Supabase | PostgreSQL database (picks, trades, AI analysis) | Free |
+| Anthropic API | News classification (Haiku) + daily analysis (Sonnet) | ~$1–2/month |
+
+### Streamlit Cloud secrets
+Set in App settings → Secrets:
+```toml
+ANTHROPIC_API_KEY = "sk-ant-..."
+SUPABASE_URL      = "https://xxxx.supabase.co"
+SUPABASE_KEY      = "eyJ..."
+FMP_API_KEY       = "..."
+```
+
+### GitHub Actions secrets
+Set in Repo → Settings → Secrets → Actions:
+```
+ANTHROPIC_API_KEY
+SUPABASE_URL
+SUPABASE_KEY
+```
+
+### Supabase setup
+Run the SQL schema from the docstring at the top of `screener/database.py` in the Supabase SQL Editor. Three tables: `screener_picks`, `trades`, `ai_analysis`. Leave RLS disabled (service_role key is used server-side by both GitHub Actions and Streamlit Cloud).
+
+---
+
+## Data sources
 
 | Data | Source | Fallback |
 |------|--------|---------|
-| Ticker universe | SPDR SPY holdings (official daily CSV) | Wikipedia → hardcoded 50 |
-| Price / OHLCV | Yahoo Finance via yfinance (2-year bulk download) | — |
-| Earnings calendar | Financial Modeling Prep API (one bulk call) | yfinance per-ticker |
+| Ticker universe | SPDR SPY holdings CSV | Wikipedia → hardcoded 50 |
+| Price / OHLCV | Yahoo Finance (yfinance, 2-year bulk) | — |
+| Earnings calendar | FMP API | yfinance per-ticker |
+| Sector mapping | Wikipedia S&P 500 table | empty (sector RS skipped) |
+| News headlines | Yahoo Finance (yfinance .news) | — |
+| News sentiment | Claude Haiku | — |
+| Daily AI analysis | Claude Sonnet | — |
 
 ---
 
@@ -154,13 +210,14 @@ Spread across 3–5 stocks per timeframe. Never concentrate in one pick.
 
 | Problem | Fix |
 |---------|-----|
-| `Could not fetch S&P 500 list` | SPDR site down — Wikipedia fallback activates automatically |
-| `Download returned no data` | No internet connection |
-| `FMP earnings failed` | API limit or plan issue — yfinance fallback activates automatically |
-| App hangs > 5 min | Yahoo Finance throttling — close and rerun |
-| IDE import warnings | Select the correct Python interpreter: Cmd+Shift+P → "Python: Select Interpreter" |
+| SPDR holdings warning | Expected on cloud — Wikipedia fallback activates automatically |
+| FMP earnings 403 | Expected on free plan — yfinance fallback activates automatically |
+| Breadth showing 0% | Fixed — ffill() applied before SMA50 comparison |
+| Performance tab empty | GitHub Actions job hasn't run yet — trigger manually via Actions tab |
+| Supabase writes failing | Check service_role key is set (not anon key) and RLS is disabled |
+| App hangs >5 min | Yahoo Finance throttling — wait a few minutes and retry |
 
 ---
 
-> **Reminder:** This screener identifies statistical setups — not guaranteed outcomes.
+> **Disclaimer:** This screener identifies statistical setups — not guaranteed outcomes.
 > Past signal performance does not guarantee future results. Never invest money you cannot afford to lose.
