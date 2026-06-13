@@ -27,8 +27,16 @@ from screener import (
     DOWNLOAD_LOOKBACK,
     fetch_recent_news,
     classify_news,
+    compute_news_score,
     get_ticker_sector_etf_map,
     SECTOR_ETFS,
+)
+from screener.database import (
+    get_client as db_client,
+    get_all_trades,
+    save_trades_bulk,
+    get_recent_picks,
+    get_latest_ai_analysis,
 )
 
 # ---------------------------------------------------------------------------
@@ -207,41 +215,67 @@ def render_tab(tf_key: str, data: dict, tickers: list[str],
     st.divider()
 
     # --- Results table ---
-    filtered = df[df["score"] >= min_score].head(top_n).copy()
+    # Check if news scores have been computed and blend them in
+    news_scores: dict = st.session_state.get("news_scores", {})
+    has_news = bool(news_scores)
+
+    score_col = "combined_score" if has_news else "score"
+    filtered = df.copy()
+    if has_news:
+        filtered["news_score"]    = filtered["ticker"].map(lambda t: news_scores.get(t, 0))
+        filtered["combined_score"] = filtered["score"] + filtered["news_score"]
+        filtered = filtered.sort_values("combined_score", ascending=False)
+    filtered = filtered[filtered[score_col] >= min_score].head(top_n).copy()
+
     filtered["Top Signals"] = filtered["signals"].apply(lambda s: "  ·  ".join(s[:3]))
     filtered["Earnings"]    = filtered["earnings_soon"].apply(lambda x: "⚠ Soon" if x else "—")
     filtered["After-Tax Return"] = filtered["expected_return_%"] * (1 - tax_rate / 100)
     sf, ss = cfg["sma_fast"], cfg["sma_slow"]
 
-    table = filtered.rename(columns={
-        "ticker":           "Ticker",
-        "score":            "Score",
-        "price":            "Entry Price",
-        "expected_price":   f"Expected ({cfg['hold_days']}d)",
+    base_cols = ["Ticker", "Tech Score"]
+    if has_news:
+        base_cols += ["News", "Combined"]
+    base_cols += [
+        "Entry Price", f"Expected ({cfg['hold_days']}d)",
+        "Exp. Return", "After-Tax Return", "RSI", "Stoch %K", "Vol ×", "Earnings", "Top Signals",
+    ]
+
+    rename_map = {
+        "ticker":            "Ticker",
+        "score":             "Tech Score",
+        "price":             "Entry Price",
+        "expected_price":    f"Expected ({cfg['hold_days']}d)",
         "expected_return_%": "Exp. Return",
-        "RSI":              "RSI",
-        "stoch_k":          "Stoch %K",
-        "vol_ratio":        "Vol ×",
-        "atr":              "ATR",
-    })[["Ticker", "Score", "Entry Price", f"Expected ({cfg['hold_days']}d)",
-        "Exp. Return", "After-Tax Return", "RSI", "Stoch %K", "Vol ×", "Earnings", "Top Signals"]]
+        "RSI":               "RSI",
+        "stoch_k":           "Stoch %K",
+        "vol_ratio":         "Vol ×",
+        "atr":               "ATR",
+    }
+    if has_news:
+        rename_map["news_score"]    = "News"
+        rename_map["combined_score"] = "Combined"
+
+    table = filtered.rename(columns=rename_map)[base_cols]
+
+    col_cfg = {
+        "Tech Score": st.column_config.ProgressColumn("Tech Score", min_value=0, max_value=120, format="%d"),
+        "Entry Price":                     st.column_config.NumberColumn("Entry Price", format="$%.2f"),
+        f"Expected ({cfg['hold_days']}d)": st.column_config.NumberColumn(f"Expected ({cfg['hold_days']}d)", format="$%.2f"),
+        "Exp. Return":                     st.column_config.NumberColumn("Exp. Return", format="+%.2f%%"),
+        "After-Tax Return":                st.column_config.NumberColumn(f"After-Tax ({tax_rate}%)", format="+%.2f%%"),
+        "RSI":                             st.column_config.NumberColumn("RSI", format="%.1f"),
+        "Stoch %K":                        st.column_config.NumberColumn("Stoch %K", format="%.1f"),
+        "Vol ×":                           st.column_config.NumberColumn("Vol ×", format="%.2f×"),
+        "ATR":                             st.column_config.NumberColumn("ATR", format="$%.2f"),
+    }
+    if has_news:
+        col_cfg["News"]     = st.column_config.NumberColumn("News", format="%+d", help="Sentiment score: GOOD=+4, BAD=−6, capped ±20")
+        col_cfg["Combined"] = st.column_config.ProgressColumn("Combined", min_value=0, max_value=140, format="%d")
 
     st.subheader(f"Top {len(filtered)} setups — {cfg['label']} — {datetime.now().strftime('%Y-%m-%d')}")
-    st.dataframe(
-        table,
-        use_container_width=True,
-        column_config={
-            "Score":                           st.column_config.ProgressColumn("Score", min_value=0, max_value=120, format="%d"),
-            "Entry Price":                     st.column_config.NumberColumn("Entry Price", format="$%.2f"),
-            f"Expected ({cfg['hold_days']}d)": st.column_config.NumberColumn(f"Expected ({cfg['hold_days']}d)", format="$%.2f"),
-            "Exp. Return":                     st.column_config.NumberColumn("Exp. Return", format="+%.2f%%"),
-            "After-Tax Return":                st.column_config.NumberColumn(f"After-Tax ({tax_rate}%)", format="+%.2f%%"),
-            "RSI":                             st.column_config.NumberColumn("RSI", format="%.1f"),
-            "Stoch %K":                        st.column_config.NumberColumn("Stoch %K", format="%.1f"),
-            "Vol ×":                           st.column_config.NumberColumn("Vol ×", format="%.2f×"),
-            "ATR":                             st.column_config.NumberColumn("ATR", format="$%.2f"),
-        },
-    )
+    if has_news:
+        st.caption("News scores blended in — fetch news in the 📰 tab to update.")
+    st.dataframe(table, use_container_width=True, column_config=col_cfg)
 
     # --- Exit rules reminder ---
     with st.expander("Exit rules for this timeframe"):
@@ -372,6 +406,11 @@ def render_news_tab() -> None:
             progress.progress((i + 1) / len(tickers), text=f"Classified {ticker}")
         progress.empty()
 
+        # Compute and store per-ticker news scores so trading tabs can blend them in
+        st.session_state["news_scores"] = {
+            ticker: compute_news_score(articles)[0]
+            for ticker, articles in results.items()
+        }
         st.session_state["news_results"]    = results
         st.session_state["news_tf_label"]   = selected_label
 
@@ -417,6 +456,248 @@ def render_news_tab() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Portfolio tab renderer
+# ---------------------------------------------------------------------------
+
+_TRADE_COLS = [
+    "date_entered", "ticker", "timeframe", "score", "entry_price",
+    "screener_target", "screener_return_pct", "signals",
+    "exit_date", "exit_price", "actual_return_pct", "held_days", "outcome", "notes",
+]
+
+
+def _fetch_live_prices(tickers: list[str]) -> dict[str, float]:
+    """Return {ticker: last_close} for a list of tickers."""
+    if not tickers:
+        return {}
+    try:
+        raw = yf.download(tickers, period="2d", auto_adjust=True, progress=False)
+        closes = raw["Close"].ffill().iloc[-1]
+        return {str(t): float(closes[t]) for t in tickers if t in closes.index and not pd.isna(closes[t])}
+    except Exception:
+        return {}
+
+
+def render_portfolio_tab() -> None:
+    st.subheader("Portfolio Tracker")
+    st.caption("Upload your trades as a CSV, or enter them manually. Live P&L is fetched from Yahoo Finance.")
+
+    db = db_client()
+
+    # --- Upload / manual entry ---
+    col_upload, col_manual = st.columns([1, 1])
+    with col_upload:
+        uploaded = st.file_uploader("Upload trade CSV", type="csv", key="trade_upload")
+        if uploaded:
+            try:
+                import io as _io
+                new_df = pd.read_csv(_io.BytesIO(uploaded.read()))
+                new_df.columns = [c.lower().strip().replace(" ", "_") for c in new_df.columns]
+                for col in _TRADE_COLS:
+                    if col not in new_df.columns:
+                        new_df[col] = None
+                new_df = new_df[_TRADE_COLS]
+                if db:
+                    rows = new_df.where(pd.notnull(new_df), None).to_dict("records")
+                    save_trades_bulk(db, rows)
+                    st.success(f"Saved {len(rows)} trades to Supabase.")
+                else:
+                    st.session_state["local_trades"] = new_df
+                    st.success(f"Loaded {len(new_df)} trades (Supabase not connected — local only).")
+            except Exception as e:
+                st.error(f"CSV parse error: {e}")
+
+    with col_manual:
+        with st.expander("Add single trade"):
+            with st.form("add_trade"):
+                t1, t2 = st.columns(2)
+                ticker     = t1.text_input("Ticker").upper().strip()
+                tf         = t2.selectbox("Timeframe", ["5d", "30d", "180d"])
+                d_entered  = t1.date_input("Date entered", value=datetime.today())
+                entry_px   = t2.number_input("Entry price $", min_value=0.01, format="%.2f")
+                target_px  = t1.number_input("Screener target $", min_value=0.0, format="%.2f")
+                target_ret = t2.number_input("Screener exp. return %", format="%.2f")
+                notes      = st.text_input("Notes / signals (optional)")
+                submitted  = st.form_submit_button("Save trade")
+                if submitted and ticker:
+                    row = {
+                        "date_entered": str(d_entered),
+                        "ticker":       ticker,
+                        "timeframe":    tf,
+                        "entry_price":  float(entry_px),
+                        "screener_target": float(target_px) if target_px else None,
+                        "screener_return_pct": float(target_ret) if target_ret else None,
+                        "notes":        notes or None,
+                        "outcome":      "OPEN",
+                    }
+                    if db:
+                        from screener.database import save_trade
+                        save_trade(db, row)
+                        st.success(f"Trade {ticker} saved.")
+                    else:
+                        local = st.session_state.get("local_trades", pd.DataFrame(columns=_TRADE_COLS))
+                        st.session_state["local_trades"] = pd.concat(
+                            [local, pd.DataFrame([row])], ignore_index=True
+                        )
+                        st.success(f"Trade {ticker} saved locally.")
+
+    st.divider()
+
+    # --- Load trades ---
+    trades_df = None
+    if db:
+        raw_trades = get_all_trades(db)
+        if raw_trades:
+            trades_df = pd.DataFrame(raw_trades)
+    elif "local_trades" in st.session_state:
+        trades_df = st.session_state["local_trades"]
+
+    if trades_df is None or trades_df.empty:
+        st.info("No trades yet — upload a CSV or add one above.")
+        if not db:
+            st.warning("Supabase not connected — trades only persist in this browser session.")
+        return
+
+    # --- Live P&L ---
+    open_mask  = trades_df["outcome"].isin(["OPEN", None, ""]) | trades_df["outcome"].isna()
+    open_df    = trades_df[open_mask].copy()
+    closed_df  = trades_df[~open_mask].copy()
+
+    if not open_df.empty:
+        live_px = _fetch_live_prices(open_df["ticker"].unique().tolist())
+        open_df["current_price"] = open_df["ticker"].map(live_px)
+        open_df["live_return_%"] = (
+            (open_df["current_price"] - open_df["entry_price"]) / open_df["entry_price"] * 100
+        ).round(2)
+        open_df["P&L $"] = (
+            (open_df["current_price"] - open_df["entry_price"])
+        ).round(2)
+
+        st.subheader("Open Positions")
+        show_open = open_df[["ticker", "timeframe", "date_entered", "entry_price",
+                              "current_price", "live_return_%", "P&L $",
+                              "screener_target", "screener_return_pct", "notes"]].copy()
+        show_open.columns = ["Ticker", "TF", "Entered", "Entry $", "Now $",
+                             "Return %", "P&L $", "Target $", "Screener %", "Notes"]
+        st.dataframe(
+            show_open,
+            use_container_width=True,
+            column_config={
+                "Return %": st.column_config.NumberColumn("Return %", format="%+.2f%%"),
+                "P&L $":    st.column_config.NumberColumn("P&L $",    format="%+.2f"),
+                "Entry $":  st.column_config.NumberColumn("Entry $",  format="$%.2f"),
+                "Now $":    st.column_config.NumberColumn("Now $",    format="$%.2f"),
+                "Target $": st.column_config.NumberColumn("Target $", format="$%.2f"),
+                "Screener %": st.column_config.NumberColumn("Screener %", format="+%.1f%%"),
+            },
+        )
+
+        # Portfolio summary metrics
+        total_pnl = open_df["P&L $"].sum()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Open Positions", len(open_df))
+        c2.metric("Total P&L", f"${total_pnl:+.2f}")
+        positive = (open_df["live_return_%"] > 0).sum()
+        c3.metric("Winning", f"{positive}/{len(open_df)}")
+        avg_ret = open_df["live_return_%"].mean()
+        c4.metric("Avg Return", f"{avg_ret:+.2f}%")
+
+    if not closed_df.empty:
+        st.subheader("Closed Trades")
+        closed_df["actual_return_pct"] = pd.to_numeric(closed_df["actual_return_pct"], errors="coerce")
+        show_closed = closed_df[["ticker", "timeframe", "date_entered", "exit_date",
+                                  "entry_price", "exit_price", "actual_return_pct",
+                                  "held_days", "outcome", "notes"]].copy()
+        show_closed.columns = ["Ticker", "TF", "Entered", "Exited",
+                               "Entry $", "Exit $", "Return %", "Days", "Outcome", "Notes"]
+        st.dataframe(
+            show_closed,
+            use_container_width=True,
+            column_config={
+                "Return %": st.column_config.NumberColumn("Return %", format="%+.2f%%"),
+                "Entry $":  st.column_config.NumberColumn("Entry $",  format="$%.2f"),
+                "Exit $":   st.column_config.NumberColumn("Exit $",   format="$%.2f"),
+            },
+        )
+        wins = (closed_df["actual_return_pct"] > 0).sum()
+        st.caption(f"Closed: {len(closed_df)} trades  |  Win rate: {wins}/{len(closed_df)} ({wins/len(closed_df)*100:.0f}%)  |  Avg return: {closed_df['actual_return_pct'].mean():+.2f}%")
+
+
+# ---------------------------------------------------------------------------
+# Performance dashboard tab renderer
+# ---------------------------------------------------------------------------
+
+def render_performance_tab() -> None:
+    st.subheader("Performance Dashboard")
+    st.caption("Screener accuracy over time — powered by Supabase historical data.")
+
+    db = db_client()
+    if not db:
+        st.warning("Supabase not connected. Set SUPABASE_URL and SUPABASE_KEY to enable this tab.")
+        with st.expander("How to set up Supabase (free)"):
+            st.markdown("""
+1. Go to [supabase.com](https://supabase.com) → New project (free tier)
+2. In SQL Editor, run the schema from `screener/database.py` (the docstring at the top)
+3. Settings → API → copy **Project URL** and **anon public** key
+4. Add to Streamlit Cloud secrets:
+   ```
+   SUPABASE_URL = "https://xxxx.supabase.co"
+   SUPABASE_KEY = "eyJ..."
+   ```
+5. Add the same to your `.env` locally
+6. The GitHub Actions job will automatically write picks after each daily run
+            """)
+        return
+
+    # --- AI latest analysis ---
+    latest = get_latest_ai_analysis(db)
+    if latest:
+        st.subheader(f"AI Analysis — {latest['run_date']}")
+        st.markdown(latest["analysis_text"])
+        st.caption(f"Top 5d picks: {latest.get('top_picks_5d', '—')}  |  "
+                   f"30d: {latest.get('top_picks_30d', '—')}  |  "
+                   f"180d: {latest.get('top_picks_180d', '—')}")
+        st.divider()
+
+    # --- Screener pick history ---
+    picks = get_recent_picks(db, days=60)
+    if not picks:
+        st.info("No historical screener runs yet. The GitHub Actions job runs Mon-Fri at 4:30 PM ET.")
+        return
+
+    picks_df = pd.DataFrame(picks)
+    picks_df["run_date"] = pd.to_datetime(picks_df["run_date"])
+
+    # Runs by date
+    run_counts = picks_df.groupby("run_date").size().reset_index(name="picks")
+    st.subheader("Screener Runs (last 60 days)")
+    st.bar_chart(run_counts.set_index("run_date")["picks"])
+
+    # Top picks frequency
+    st.subheader("Most Frequently Picked Stocks")
+    freq = picks_df["ticker"].value_counts().head(20).reset_index()
+    freq.columns = ["Ticker", "Times Picked"]
+    st.dataframe(freq, use_container_width=True, hide_index=True)
+
+    # Score distributions per timeframe
+    st.subheader("Combined Score Distribution by Timeframe")
+    c1, c2, c3 = st.columns(3)
+    for col, tf in zip([c1, c2, c3], ["5d", "30d", "180d"]):
+        sub = picks_df[picks_df["timeframe"] == tf]["combined_score"]
+        if not sub.empty:
+            col.metric(f"{tf} avg score", f"{sub.mean():.0f}", f"max {sub.max()}")
+
+    # Raw picks table
+    with st.expander("Raw screener picks data"):
+        st.dataframe(
+            picks_df[["run_date", "timeframe", "ticker", "technical_score",
+                       "news_score", "combined_score", "entry_price",
+                       "expected_return_pct", "signals"]],
+            use_container_width=True,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
 
@@ -454,40 +735,52 @@ if run_btn:
     st.session_state["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
 if "raw_data" not in st.session_state:
-    if not run_btn:
-        st.info("👈 Click **Run Screener** in the sidebar to start. ~2–3 min first run, cached after that.")
-        st.stop()
+    if run_btn:
+        tickers = get_sp500_tickers()
+        download_list = tuple(["SPY", "^VIX"] + SECTOR_ETFS + tickers)
+        with st.spinner("Downloading 2 years of price data for 500+ stocks… (cached after first run)"):
+            raw = download_data(download_list)
 
-    tickers = get_sp500_tickers()
-    download_list = tuple(["SPY", "^VIX"] + SECTOR_ETFS + tickers)
-    with st.spinner("Downloading 2 years of price data for 500+ stocks… (cached after first run)"):
-        raw = download_data(download_list)
+        if raw["close"].empty:
+            st.error("Download returned no data. Check your internet connection.")
+            st.stop()
 
-    if raw["close"].empty:
-        st.error("Download returned no data. Check your internet connection.")
-        st.stop()
+        with st.spinner("Building sector ETF map…"):
+            st.session_state["sector_map"] = get_ticker_sector_etf_map()
 
-    with st.spinner("Building sector ETF map…"):
-        st.session_state["sector_map"] = get_ticker_sector_etf_map()
+        st.session_state["raw_data"] = raw
+        st.session_state["tickers"]  = tickers
 
-    st.session_state["raw_data"] = raw
-    st.session_state["tickers"]  = tickers
-
-raw_data = st.session_state["raw_data"]
-tickers  = st.session_state["tickers"]
-
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📅 5-Day Trading", "📆 30-Day Trading", "📈 180-Day Trading", "📰 News"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📅 5-Day Trading", "📆 30-Day Trading", "📈 180-Day Trading",
+    "📰 News", "💼 Portfolio", "📊 Performance",
 ])
 
+_screener_ready = "raw_data" in st.session_state
+
 with tab1:
-    render_tab("5d",  raw_data, tickers, top_n, min_score, tax_rate)
+    if _screener_ready:
+        render_tab("5d", st.session_state["raw_data"], st.session_state["tickers"], top_n, min_score, tax_rate)
+    else:
+        st.info("👈 Click **Run Screener** in the sidebar to start. ~2–3 min first run, cached after that.")
 
 with tab2:
-    render_tab("30d", raw_data, tickers, top_n, min_score, tax_rate)
+    if _screener_ready:
+        render_tab("30d", st.session_state["raw_data"], st.session_state["tickers"], top_n, min_score, tax_rate)
+    else:
+        st.info("👈 Click **Run Screener** in the sidebar to start.")
 
 with tab3:
-    render_tab("180d", raw_data, tickers, top_n, min_score, tax_rate)
+    if _screener_ready:
+        render_tab("180d", st.session_state["raw_data"], st.session_state["tickers"], top_n, min_score, tax_rate)
+    else:
+        st.info("👈 Click **Run Screener** in the sidebar to start.")
 
 with tab4:
     render_news_tab()
+
+with tab5:
+    render_portfolio_tab()
+
+with tab6:
+    render_performance_tab()

@@ -5,6 +5,30 @@ import yfinance as yf
 import anthropic
 
 
+def compute_news_score(articles: list[dict]) -> tuple[int, str]:
+    """Return (news_score, label) for a classified article list.
+
+    GOOD headline = +4, BAD = -6, NEUTRAL = 0. Capped at [-20, +20].
+    Used to blend into the technical score for a combined ranking.
+    """
+    if not articles:
+        return 0, "—"
+    raw = sum(
+        4 if a.get("sentiment") == "GOOD" else -6 if a.get("sentiment") == "BAD" else 0
+        for a in articles
+    )
+    score = max(-20, min(20, raw))
+    good = sum(1 for a in articles if a.get("sentiment") == "GOOD")
+    bad  = sum(1 for a in articles if a.get("sentiment") == "BAD")
+    if score > 0:
+        label = f"+{score} ({good}G/{bad}B)"
+    elif score < 0:
+        label = f"{score} ({good}G/{bad}B)"
+    else:
+        label = f"0 ({good}G/{bad}B)"
+    return score, label
+
+
 def fetch_recent_news(tickers: list[str], days: int = 3) -> dict[str, list[dict]]:
     cutoff = (datetime.now() - timedelta(days=days)).timestamp()
     result: dict[str, list[dict]] = {}

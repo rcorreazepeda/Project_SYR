@@ -1,0 +1,34 @@
+name: Daily Stock Screener
+
+on:
+  schedule:
+    # 4:30 PM EST (9:30 PM UTC) — always after market close
+    # During EDT (summer) this fires at 5:30 PM ET, still after close
+    - cron: '30 21 * * 1-5'
+  workflow_dispatch:   # also allows manual "Run workflow" button in GitHub Actions UI
+
+jobs:
+  run-screener:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:      ${{ secrets.SUPABASE_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily screener job
+        run: python daily_job.py
