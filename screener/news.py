@@ -29,24 +29,45 @@ def compute_news_score(articles: list[dict]) -> tuple[int, str]:
     return score, label
 
 
+def _parse_news_item(item: dict, cutoff: float) -> dict | None:
+    """Handle both old yfinance flat format and new 1.4.x nested content format."""
+    # New format: {id, content: {title, pubDate, provider, canonicalUrl, ...}}
+    content = item.get("content", {})
+    if content:
+        title     = content.get("title", "")
+        publisher = content.get("provider", {}).get("displayName", "")
+        link      = (content.get("canonicalUrl") or content.get("clickThroughUrl") or {}).get("url", "")
+        pub_str   = content.get("pubDate", "")
+        try:
+            ts = datetime.fromisoformat(pub_str.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            ts = 0.0
+    else:
+        # Old flat format: {title, publisher, link, providerPublishTime}
+        title     = item.get("title", "")
+        publisher = item.get("publisher", "")
+        link      = item.get("link", "")
+        ts        = float(item.get("providerPublishTime", 0))
+
+    if ts < cutoff or not title:
+        return None
+    return {
+        "title":     title,
+        "publisher": publisher,
+        "link":      link,
+        "published": datetime.fromtimestamp(ts).strftime("%b %d, %H:%M"),
+        "sentiment": "NEUTRAL",
+        "reason":    "",
+    }
+
+
 def fetch_recent_news(tickers: list[str], days: int = 3) -> dict[str, list[dict]]:
     cutoff = (datetime.now() - timedelta(days=days)).timestamp()
     result: dict[str, list[dict]] = {}
     for ticker in tickers:
         try:
             raw = yf.Ticker(ticker).news or []
-            items = []
-            for item in raw:
-                ts = item.get("providerPublishTime", 0)
-                if ts >= cutoff:
-                    items.append({
-                        "title":     item.get("title", ""),
-                        "publisher": item.get("publisher", ""),
-                        "link":      item.get("link", ""),
-                        "published": datetime.fromtimestamp(ts).strftime("%b %d, %H:%M"),
-                        "sentiment": "NEUTRAL",
-                        "reason":    "",
-                    })
+            items = [p for item in raw if (p := _parse_news_item(item, cutoff)) is not None]
             result[ticker] = items
         except Exception:
             result[ticker] = []
