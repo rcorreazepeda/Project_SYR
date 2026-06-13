@@ -20,7 +20,8 @@ trading system.
 ## Architecture
 
 ```
-app.py                  Streamlit UI — tabs for each timeframe + news
+app.py                  Streamlit UI — 6 tabs (3 trading + news + portfolio + performance)
+daily_job.py            GitHub Actions scheduled runner (runs after market close)
 cli.py                  Terminal runner (same logic, CSV output)
 screener/
   config.py             Timeframe configs and all scoring weights
@@ -30,10 +31,14 @@ screener/
   forecast.py           Expected price target (ATR + mean-reversion blend)
   earnings.py           Earnings proximity check (FMP API → yfinance fallback)
   sectors.py            Maps each ticker to its SPDR sector ETF (XLK, XLF…)
-  news.py               Fetches last 3 days of headlines, classifies with Claude
+  news.py               Fetches headlines, classifies with Claude, compute_news_score()
+  database.py           Supabase client — save picks, trades, AI analysis; read history
+.github/
+  workflows/
+    daily_screener.yml  Cron job: Mon-Fri 4:30 PM ET, runs daily_job.py
 pages/
   1_📖_Metrics_Guide.py  In-app explanation of every metric
-trade_log.csv           Manual trade log (entry, screener prediction, exit, result)
+trade_log.csv           Manual trade log template
 ```
 
 ---
@@ -138,14 +143,58 @@ Each stock gets a raw score (0–120+). Higher = more signals aligned.
 
 ---
 
-## Roadmap (discussed, not built yet)
+## News score blending
 
-1. **News score → blended final score** — after News tab fetch, sentiment score (−20 to +20) added to technical score
-2. **Supabase database** — persist daily screener results
-3. **GitHub Actions daily job** — run screener Mon–Fri at 4:30pm ET automatically
-4. **Portfolio tracker tab** — Raul uploads his trades, sees live P&L vs screener targets
-5. **Performance dashboard tab** — screener accuracy over time, signal win rates
-6. **AI weekly email** — Claude analyzes historical picks vs actual outcomes
+After running the News tab ("Fetch & Classify News"), each article is scored:
+- GOOD headline: +4 points
+- BAD headline: −6 points (penalty is heavier — bad news is more actionable)
+- NEUTRAL: 0
+- Cap: [−20, +20] per ticker
+
+`news_scores` dict is stored in `st.session_state` and all three trading tabs
+automatically add "News" and "Combined" columns, re-sorting by combined score.
+
+`compute_news_score(articles)` in `screener/news.py` returns `(score, label)`.
+
+## Daily automated job (GitHub Actions)
+
+`daily_job.py` runs Mon–Fri at 4:30 PM ET via `.github/workflows/daily_screener.yml`.
+
+Flow:
+1. Downloads all S&P 500 data
+2. Scores 5d / 30d / 180d timeframes
+3. Fetches + classifies news for top 20 unique picks
+4. Blends news scores → combined_score
+5. Saves top 20 per timeframe to Supabase `screener_picks`
+6. Loads last 30 days of picks from Supabase for context
+7. Claude Sonnet analyzes results + suggests scoring improvements
+8. Saves AI analysis to Supabase `ai_analysis`
+
+GitHub Actions secrets needed: `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`
+
+## Supabase schema (run once in SQL Editor)
+
+See docstring at top of `screener/database.py` for the full CREATE TABLE statements.
+
+Three tables:
+- `screener_picks` — daily automated results (UNIQUE on run_date + timeframe + ticker)
+- `trades` — Raul's actual trades (uploaded via Portfolio tab)
+- `ai_analysis` — Claude's daily analysis text (UNIQUE on run_date)
+
+## Streamlit secrets needed (Streamlit Cloud dashboard)
+
+```
+ANTHROPIC_API_KEY = "..."
+SUPABASE_URL      = "https://xxxx.supabase.co"
+SUPABASE_KEY      = "eyJ..."
+FMP_API_KEY       = "..."   (optional — yfinance fallback used otherwise)
+```
+
+## Roadmap (remaining)
+
+- **AI email** — send daily analysis via SendGrid / Resend after GitHub Actions job
+- **Outcome tracking** — auto-compare picks to actual prices N days later in `price_snapshots` table
+- **Signal win rate breakdown** — parse signals column to compute per-signal accuracy
 
 ---
 
