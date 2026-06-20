@@ -461,8 +461,8 @@ def render_news_tab() -> None:
 # ---------------------------------------------------------------------------
 
 _TRADE_COLS = [
-    "date_entered", "ticker", "timeframe", "score", "entry_price",
-    "screener_target", "screener_return_pct", "signals",
+    "date_entered", "ticker", "timeframe", "shares", "entry_price", "total_invested",
+    "screener_target", "screener_return_pct", "score", "signals",
     "exit_date", "exit_price", "actual_return_pct", "held_days", "outcome", "notes",
 ]
 
@@ -513,23 +513,27 @@ def render_portfolio_tab() -> None:
             with st.form("add_trade"):
                 t1, t2 = st.columns(2)
                 ticker     = t1.text_input("Ticker").upper().strip()
-                tf         = t2.selectbox("Timeframe", ["5d", "30d", "180d"])
+                tf         = t2.selectbox("Timeframe", ["5d", "30d", "180d", "— (no screener)"])
                 d_entered  = t1.date_input("Date entered", value=datetime.today())
                 entry_px   = t2.number_input("Entry price $", min_value=0.01, format="%.2f")
-                target_px  = t1.number_input("Screener target $", min_value=0.0, format="%.2f")
-                target_ret = t2.number_input("Screener exp. return %", format="%.2f")
-                notes      = st.text_input("Notes / signals (optional)")
+                shares     = t1.number_input("Shares bought", min_value=0.0, format="%.4f")
+                target_px  = t2.number_input("Screener target $ (optional)", min_value=0.0, format="%.2f")
+                target_ret = t1.number_input("Screener exp. return % (optional)", format="%.2f")
+                notes      = st.text_input("Notes (optional)")
                 submitted  = st.form_submit_button("Save trade")
                 if submitted and ticker:
+                    total_inv = round(float(shares) * float(entry_px), 2) if shares else None
                     row = {
-                        "date_entered": str(d_entered),
-                        "ticker":       ticker,
-                        "timeframe":    tf,
-                        "entry_price":  float(entry_px),
-                        "screener_target": float(target_px) if target_px else None,
+                        "date_entered":      str(d_entered),
+                        "ticker":            ticker,
+                        "timeframe":         tf if tf != "— (no screener)" else None,
+                        "shares":            float(shares) if shares else None,
+                        "entry_price":       float(entry_px),
+                        "total_invested":    total_inv,
+                        "screener_target":   float(target_px) if target_px else None,
                         "screener_return_pct": float(target_ret) if target_ret else None,
-                        "notes":        notes or None,
-                        "outcome":      "OPEN",
+                        "notes":             notes or None,
+                        "outcome":           "OPEN",
                     }
                     if db:
                         from screener.database import save_trade
@@ -567,41 +571,69 @@ def render_portfolio_tab() -> None:
     if not open_df.empty:
         live_px = _fetch_live_prices(open_df["ticker"].unique().tolist())
         open_df["current_price"] = open_df["ticker"].map(live_px)
+        open_df["entry_price"]   = pd.to_numeric(open_df["entry_price"],   errors="coerce")
+        open_df["shares"]        = pd.to_numeric(open_df.get("shares"),    errors="coerce")
+        open_df["total_invested"]= pd.to_numeric(open_df.get("total_invested"), errors="coerce")
+
         open_df["live_return_%"] = (
             (open_df["current_price"] - open_df["entry_price"]) / open_df["entry_price"] * 100
         ).round(2)
+
+        # P&L in $ — use shares if available, else per-share difference
         open_df["P&L $"] = (
-            (open_df["current_price"] - open_df["entry_price"])
+            (open_df["current_price"] - open_df["entry_price"]) * open_df["shares"]
+        ).round(2)
+        # Fill in P&L for rows without shares (show per-share instead)
+        no_shares = open_df["shares"].isna()
+        open_df.loc[no_shares, "P&L $"] = (
+            open_df.loc[no_shares, "current_price"] - open_df.loc[no_shares, "entry_price"]
         ).round(2)
 
+        # Current value
+        open_df["current_value"] = (open_df["current_price"] * open_df["shares"]).round(2)
+
         st.subheader("Open Positions")
-        show_open = open_df[["ticker", "timeframe", "date_entered", "entry_price",
-                              "current_price", "live_return_%", "P&L $",
-                              "screener_target", "screener_return_pct", "notes"]].copy()
-        show_open.columns = ["Ticker", "TF", "Entered", "Entry $", "Now $",
-                             "Return %", "P&L $", "Target $", "Screener %", "Notes"]
+        show_open = open_df[[
+            "ticker", "timeframe", "date_entered", "shares", "entry_price",
+            "total_invested", "current_price", "current_value",
+            "live_return_%", "P&L $", "screener_target", "screener_return_pct", "notes"
+        ]].copy()
+        show_open.columns = [
+            "Ticker", "TF", "Entered", "Shares", "Entry $",
+            "Invested $", "Now $", "Value $",
+            "Return %", "P&L $", "Target $", "Screener %", "Notes"
+        ]
         st.dataframe(
             show_open,
             use_container_width=True,
             column_config={
-                "Return %": st.column_config.NumberColumn("Return %", format="%+.2f%%"),
-                "P&L $":    st.column_config.NumberColumn("P&L $",    format="%+.2f"),
-                "Entry $":  st.column_config.NumberColumn("Entry $",  format="$%.2f"),
-                "Now $":    st.column_config.NumberColumn("Now $",    format="$%.2f"),
-                "Target $": st.column_config.NumberColumn("Target $", format="$%.2f"),
+                "Shares":     st.column_config.NumberColumn("Shares",     format="%.2f"),
+                "Return %":   st.column_config.NumberColumn("Return %",   format="%+.2f%%"),
+                "P&L $":      st.column_config.NumberColumn("P&L $",      format="%+.2f"),
+                "Entry $":    st.column_config.NumberColumn("Entry $",    format="$%.2f"),
+                "Now $":      st.column_config.NumberColumn("Now $",      format="$%.2f"),
+                "Invested $": st.column_config.NumberColumn("Invested $", format="$%.2f"),
+                "Value $":    st.column_config.NumberColumn("Value $",    format="$%.2f"),
+                "Target $":   st.column_config.NumberColumn("Target $",   format="$%.2f"),
                 "Screener %": st.column_config.NumberColumn("Screener %", format="+%.1f%%"),
             },
         )
 
         # Portfolio summary metrics
-        total_pnl = open_df["P&L $"].sum()
-        c1, c2, c3, c4 = st.columns(4)
+        total_invested = open_df["total_invested"].fillna(
+            open_df["entry_price"] * open_df["shares"]
+        ).sum()
+        total_value  = open_df["current_value"].sum()
+        total_pnl    = open_df["P&L $"].sum()
+        positive     = (open_df["live_return_%"] > 0).sum()
+        avg_ret      = open_df["live_return_%"].mean()
+
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Open Positions", len(open_df))
-        c2.metric("Total P&L", f"${total_pnl:+.2f}")
-        positive = (open_df["live_return_%"] > 0).sum()
-        c3.metric("Winning", f"{positive}/{len(open_df)}")
-        avg_ret = open_df["live_return_%"].mean()
-        c4.metric("Avg Return", f"{avg_ret:+.2f}%")
+        c2.metric("Total Invested", f"${total_invested:,.2f}" if total_invested > 0 else "—")
+        c3.metric("Portfolio Value", f"${total_value:,.2f}" if total_value > 0 else "—")
+        c4.metric("Total P&L", f"${total_pnl:+,.2f}")
+        c5.metric("Winning", f"{positive}/{len(open_df)}  avg {avg_ret:+.1f}%")
 
     if not closed_df.empty:
         st.subheader("Closed Trades")

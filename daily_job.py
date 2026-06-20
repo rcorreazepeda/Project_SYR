@@ -13,7 +13,6 @@ What it does on each run:
 """
 import os
 import sys
-import json
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -40,7 +39,6 @@ from screener.database import (
     get_client,
     save_screener_run,
     save_ai_analysis,
-    get_recent_picks,
     get_picks_pending_outcome,
     update_pick_outcome,
     get_picks_with_outcomes,
@@ -385,8 +383,9 @@ def _build_portfolio_section(open_trades: list[dict], close_all, today_results) 
         else:
             continue
 
+        shares  = float(trade.get("shares") or 1)
         pnl_pct = (current - entry_price) / entry_price * 100
-        pnl_usd = current - entry_price
+        pnl_usd = (current - entry_price) * shares
         total_pnl += pnl_usd
 
         # Status vs take profit / stop loss
@@ -640,7 +639,7 @@ def main():
     news_scores: dict[str, int] = {}
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    for i, ticker in enumerate(all_top):
+    for ticker in all_top:
         articles = news_by_ticker.get(ticker, [])
         if articles and api_key:
             try:
