@@ -471,25 +471,49 @@ _TRADE_COLS = [
 
 _CATEGORIES = [
     "— (none)", "Tech", "Semiconductors", "AI / Cloud", "Networking",
-    "Financials", "Healthcare", "Energy", "Consumer", "Industrials", "Other",
+    "Financials", "Healthcare", "Energy", "Consumer", "Industrials", "Crypto", "Other",
 ]
+
+# Common crypto tickers that need -USD suffix for Yahoo Finance
+_CRYPTO_TICKERS = {
+    "BTC", "ETH", "SOL", "DOGE", "ADA", "XRP", "AVAX", "DOT", "LINK",
+    "MATIC", "LTC", "UNI", "ATOM", "NEAR", "FIL", "APT", "ARB", "OP",
+}
+
+
+def _normalize_ticker(ticker: str) -> str:
+    """Convert plain crypto symbols to Yahoo Finance format (BTC → BTC-USD)."""
+    t = ticker.upper().strip()
+    if t in _CRYPTO_TICKERS and not t.endswith("-USD"):
+        return f"{t}-USD"
+    return t
 
 
 def _fetch_live_prices(tickers: list[str]) -> dict[str, float]:
-    """Return {ticker: last_close} for a list of tickers."""
+    """Return {ticker: last_close} for a list of tickers. Normalizes crypto symbols."""
     if not tickers:
         return {}
+    # Map stored ticker → Yahoo Finance ticker (e.g. BTC → BTC-USD)
+    yf_map   = {t: _normalize_ticker(t) for t in tickers}
+    yf_ticks = list(yf_map.values())
     try:
-        raw    = yf.download(tickers, period="2d", auto_adjust=True, progress=False)
+        raw    = yf.download(yf_ticks, period="2d", auto_adjust=True, progress=False)
         closes = raw["Close"].ffill()
 
         # Single ticker: yfinance returns a Series (dates as index), not a DataFrame
         if isinstance(closes, pd.Series):
             val = closes.iloc[-1]
-            return {tickers[0]: float(val)} if not pd.isna(val) else {}
+            orig = tickers[0]
+            return {orig: float(val)} if not pd.isna(val) else {}
 
         last = closes.iloc[-1]
-        return {str(t): float(last[t]) for t in tickers if t in last.index and not pd.isna(last[t])}
+        # Map back from yf ticker → original stored ticker
+        inv_map = {v: k for k, v in yf_map.items()}
+        return {
+            inv_map[str(t)]: float(last[t])
+            for t in yf_ticks
+            if t in last.index and not pd.isna(last[t])
+        }
     except Exception:
         return {}
 
@@ -561,7 +585,7 @@ def render_portfolio_tab() -> None:
         with st.expander(f"Add trade to {owner.title()}'s portfolio"):
             with st.form(f"add_trade_{owner}"):
                 t1, t2 = st.columns(2)
-                ticker     = t1.text_input("Ticker").upper().strip()
+                ticker     = _normalize_ticker(t1.text_input("Ticker"))
                 tf         = t2.selectbox("Timeframe", ["5d", "30d", "180d", "— (no screener)"])
                 d_entered  = t1.date_input("Date entered", value=datetime.today())
                 entry_px   = t2.number_input("Entry price $", min_value=0.01, format="%.2f")
