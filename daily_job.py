@@ -526,7 +526,129 @@ def _build_headlines_section(news_by_ticker: dict, today_results: dict) -> str:
     </div>"""
 
 
-def _build_email_html(today_results, analysis, run_date, open_trades=None, close_all=None, news_by_ticker=None) -> str:
+def _get_current_prices(trades: list[dict], close_all) -> dict[str, float]:
+    """Return {ticker: price} for all trades, fetching extras not in bulk download."""
+    prices: dict[str, float] = {}
+    missing = []
+    for t in {tr.get("ticker", "") for tr in trades if tr.get("ticker")}:
+        if t in close_all.columns:
+            prices[t] = float(close_all[t].ffill().iloc[-1])
+        else:
+            missing.append(t)
+    if missing:
+        try:
+            raw    = yf.download(missing, period="2d", auto_adjust=True, progress=False)
+            closes = raw["Close"].ffill()
+            if isinstance(closes, pd.Series):
+                prices[missing[0]] = float(closes.iloc[-1])
+            else:
+                last = closes.iloc[-1]
+                for t in missing:
+                    if t in last.index and not pd.isna(last[t]):
+                        prices[t] = float(last[t])
+        except Exception:
+            pass
+    return prices
+
+
+def _build_portfolio_ai_prompt(owner: str, trades: list[dict], prices: dict[str, float],
+                                all_trades: dict[str, list]) -> str:
+    lines = [
+        f"You are a portfolio advisor reviewing {owner.title()}'s holdings as of market close today.",
+        "Be direct, data-driven, and concise. No filler.",
+        "",
+        f"## {owner.upper()}'S OPEN POSITIONS",
+    ]
+
+    category_value: dict[str, float] = {}
+    total_value = 0.0
+
+    for trade in trades:
+        ticker      = trade.get("ticker", "")
+        entry_price = float(trade.get("entry_price") or 0)
+        shares      = float(trade.get("shares") or 0)
+        category    = trade.get("category") or "Other"
+        invested    = float(trade.get("total_invested") or 0) or round(shares * entry_price, 2)
+        current     = prices.get(ticker, 0)
+        if not ticker or entry_price == 0 or current == 0:
+            continue
+        pnl_pct   = (current - entry_price) / entry_price * 100
+        cur_val   = round(shares * current, 2) if shares else current
+        pnl_usd   = cur_val - invested
+
+        category_value[category] = category_value.get(category, 0) + cur_val
+        total_value += cur_val
+
+        lines.append(
+            f"  {ticker:10s} [{category:14s}]  "
+            f"entry ${entry_price:.2f}  now ${current:.2f}  "
+            f"return {pnl_pct:+.1f}%  P&L ${pnl_usd:+.2f}"
+        )
+
+    # Category concentration
+    if total_value > 0:
+        lines += ["", "## CATEGORY CONCENTRATION"]
+        for cat, val in sorted(category_value.items(), key=lambda x: -x[1]):
+            pct = val / total_value * 100
+            lines.append(f"  {cat:14s}  {pct:.1f}%  (${val:,.0f})")
+
+    # Overlap with other portfolios
+    my_tickers = {tr.get("ticker") for tr in trades}
+    for other_owner, other_trades in all_trades.items():
+        if other_owner == owner:
+            continue
+        shared = my_tickers & {tr.get("ticker") for tr in other_trades}
+        if shared:
+            lines.append(f"\n## OVERLAP WITH {other_owner.upper()}: {', '.join(sorted(shared))}")
+
+    lines += [
+        "",
+        "## YOUR TASK",
+        "1. **Position review** — for each ticker give one of: HOLD / SELL / BUY MORE",
+        "   followed by one sentence reason. Format: `TICKER — ACTION: reason`",
+        "",
+        "2. **Concentration risk** — flag any category over 35% of portfolio.",
+        "   Suggest one rebalancing move if needed.",
+        "",
+        "3. **Portfolio health** — score 1-10 and one sentence summary.",
+        "",
+        "4. **One action** — the single most important thing to do today.",
+        "",
+        "Keep it under 400 words. Be specific with numbers.",
+    ]
+    return "\n".join(lines)
+
+
+def run_portfolio_analysis(trades_by_owner: dict, close_all) -> dict[str, str]:
+    """Run Claude portfolio analysis for each owner. Returns {owner: analysis_text}."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key or not trades_by_owner:
+        return {}
+
+    client  = anthropic.Anthropic(api_key=api_key)
+    results = {}
+
+    for owner, trades in trades_by_owner.items():
+        if not trades:
+            continue
+        prices = _get_current_prices(trades, close_all)
+        prompt = _build_portfolio_ai_prompt(owner, trades, prices, trades_by_owner)
+        try:
+            resp = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=900,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            results[owner] = resp.content[0].text
+            print(f"  Portfolio analysis done for {owner}.")
+        except Exception as e:
+            print(f"  [warn] Portfolio analysis failed for {owner}: {e}")
+
+    return results
+
+
+def _build_email_html(today_results, analysis, run_date, open_trades=None, close_all=None,
+                      news_by_ticker=None, portfolio_analysis: str = "") -> str:
     regime_rows = ""
     picks_sections = ""
 
@@ -589,6 +711,12 @@ def _build_email_html(today_results, analysis, run_date, open_trades=None, close
     portfolio_section = _build_portfolio_section(open_trades or [], close_all, today_results) \
                         if close_all is not None else ""
     headlines_section = _build_headlines_section(news_by_ticker or {}, today_results)
+    port_ai_html      = portfolio_analysis.replace("\n", "<br>") if portfolio_analysis else ""
+    port_ai_section   = f"""
+    <h3 style="color:#00b4d8;margin:32px 0 8px">🤖 Portfolio Analysis</h3>
+    <div style="background:#1a1a1a;border-left:4px solid #f0c040;padding:16px;border-radius:4px;line-height:1.7">
+      {port_ai_html}
+    </div>""" if port_ai_html else ""
 
     return f"""
     <!DOCTYPE html>
@@ -608,6 +736,8 @@ def _build_email_html(today_results, analysis, run_date, open_trades=None, close
       </table>
 
       {portfolio_section}
+
+      {port_ai_section}
 
       {picks_sections}
 
@@ -643,7 +773,7 @@ def _owner_email_map() -> dict[str, str]:
 
 
 def send_email(today_results, analysis, run_date, trades_by_owner: dict | None = None,
-               close_all=None, news_by_ticker=None) -> None:
+               close_all=None, news_by_ticker=None, portfolio_analyses: dict | None = None) -> None:
     api_key = os.environ.get("RESEND_API_KEY", "")
     if not api_key:
         print("  [skip] RESEND_API_KEY not set — skipping email.")
@@ -660,17 +790,19 @@ def send_email(today_results, analysis, run_date, trades_by_owner: dict | None =
         my_email        = os.environ.get("ALERT_EMAIL", "raulcorreazepeda@gmail.com")
         trades_by_owner = trades_by_owner or {}
 
+        portfolio_analyses = portfolio_analyses or {}
         for owner in trades_by_owner:
-            open_trades = trades_by_owner.get(owner, [])
-            n_open      = len(open_trades)
-            port_tag    = f" | {n_open} open" if n_open else ""
+            open_trades      = trades_by_owner.get(owner, [])
+            port_analysis    = portfolio_analyses.get(owner, "")
+            n_open           = len(open_trades)
+            port_tag         = f" | {n_open} open" if n_open else ""
             resend.Emails.send({
                 "from":    "R&S Screener <screener@resend.dev>",
                 "to":      [my_email],
                 "subject": f"📈 {owner.title()} — {run_date} — {regime} — 5d: {top_5d} | 30d: {top_30d}{port_tag}",
                 "html":    _build_email_html(
                     today_results, analysis, run_date,
-                    open_trades, close_all, news_by_ticker,
+                    open_trades, close_all, news_by_ticker, port_analysis,
                 ),
             })
             print(f"  Email sent to {my_email} ({owner}).")
@@ -820,7 +952,8 @@ def main():
                 if not t.get("outcome") or t.get("outcome") == "OPEN"
             ]
             print(f"  Loaded {len(trades_by_owner[owner])} open positions for {owner}.")
-    send_email(today_results, analysis, run_date, trades_by_owner, data["close"], news_by_ticker)
+    portfolio_analyses = run_portfolio_analysis(trades_by_owner, data["close"])
+    send_email(today_results, analysis, run_date, trades_by_owner, data["close"], news_by_ticker, portfolio_analyses)
 
     print("\n=== Job complete ===")
 
