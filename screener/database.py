@@ -154,14 +154,27 @@ def get_latest_ai_analysis(client: "Client") -> Optional[dict]:
     return resp.data[0] if resp.data else None
 
 
-def get_all_trades(client: "Client"):
+def get_all_trades(client: "Client", owner: str = "raul"):
     resp = (
         client.table("trades")
         .select("*")
+        .eq("owner", owner)
         .order("date_entered", desc=True)
         .execute()
     )
     return resp.data or []
+
+
+def get_all_owners(client: "Client") -> list[str]:
+    resp = client.table("trades").select("owner").execute()
+    seen = set()
+    owners = []
+    for row in (resp.data or []):
+        o = row.get("owner") or "raul"
+        if o not in seen:
+            seen.add(o)
+            owners.append(o)
+    return owners or ["raul"]
 
 
 def save_trade(client: "Client", trade: dict) -> None:

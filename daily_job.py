@@ -366,13 +366,15 @@ def _build_portfolio_section(open_trades: list[dict], close_all, today_results) 
     }
 
     rows = ""
-    total_pnl = 0.0
+    total_pnl       = 0.0
+    total_invested  = 0.0
+    total_current   = 0.0
 
     for trade in open_trades:
         ticker      = trade.get("ticker", "")
         entry_price = float(trade.get("entry_price") or 0)
         tf_key      = trade.get("timeframe", "")
-        entered     = trade.get("date_entered", "")
+        category    = trade.get("category", "") or ""
 
         if not ticker or entry_price == 0:
             continue
@@ -383,10 +385,15 @@ def _build_portfolio_section(open_trades: list[dict], close_all, today_results) 
         else:
             continue
 
-        shares  = float(trade.get("shares") or 1)
-        pnl_pct = (current - entry_price) / entry_price * 100
-        pnl_usd = (current - entry_price) * shares
-        total_pnl += pnl_usd
+        shares       = float(trade.get("shares") or 1)
+        invested     = float(trade.get("total_invested") or 0) or round(shares * entry_price, 2)
+        current_val  = round(shares * current, 2)
+        pnl_pct      = (current - entry_price) / entry_price * 100
+        pnl_usd      = current_val - invested
+
+        total_pnl      += pnl_usd
+        total_invested += invested
+        total_current  += current_val
 
         # Status vs take profit / stop loss
         cfg = TIMEFRAMES.get(tf_key, {})
@@ -412,47 +419,94 @@ def _build_portfolio_section(open_trades: list[dict], close_all, today_results) 
             status     = "🔵 Holding"
             status_col = "#9e9e9e"
 
-        still_liked = "⭐ Still in picks" if ticker in todays_picks else ""
-        pnl_color   = "#4caf50" if pnl_pct >= 0 else "#ef5350"
+        still_liked = "⭐" if ticker in todays_picks else ""
+        pnl_color   = "#4caf50" if pnl_usd >= 0 else "#ef5350"
+        cat_badge   = f"<span style='color:#aaa;font-size:11px'>{category}</span><br>" if category else ""
 
         rows += f"""
         <tr style="border-bottom:1px solid #2a2a2a">
-          <td style="padding:8px 12px;font-weight:700">{ticker}</td>
-          <td style="padding:8px 12px;color:#aaa;font-size:12px">{tf_key or '—'}  {entered}</td>
-          <td style="padding:8px 12px">${entry_price:.2f}</td>
-          <td style="padding:8px 12px">${current:.2f}</td>
-          <td style="padding:8px 12px;color:{pnl_color};font-weight:700">{pnl_pct:+.2f}%</td>
+          <td style="padding:8px 12px;font-weight:700">{ticker} {still_liked}<br>{cat_badge}</td>
+          <td style="padding:8px 12px;color:#aaa;font-size:12px">{tf_key or '—'}</td>
+          <td style="padding:8px 12px">${invested:,.2f}</td>
+          <td style="padding:8px 12px">${current_val:,.2f}</td>
+          <td style="padding:8px 12px;color:{pnl_color};font-weight:700">{pnl_usd:+,.2f}<br>
+            <span style="font-size:11px;font-weight:400">{pnl_pct:+.2f}%</span></td>
           <td style="padding:8px 12px;color:{status_col};font-size:13px">{status}</td>
-          <td style="padding:8px 12px;font-size:12px;color:#f0c040">{still_liked}</td>
         </tr>"""
 
     if not rows:
         return ""
 
     pnl_color = "#4caf50" if total_pnl >= 0 else "#ef5350"
+    summary_color = "#4caf50" if total_pnl >= 0 else "#ef5350"
     return f"""
-    <h3 style="color:#00b4d8;margin:32px 0 8px">
-      💼 Open Positions
-      <span style="font-weight:400;font-size:14px;color:{pnl_color}">
-        — Total P&L {total_pnl:+.2f}$
-      </span>
-    </h3>
+    <h3 style="color:#00b4d8;margin:32px 0 4px">💼 Open Positions</h3>
+    <p style="margin:0 0 12px;font-size:13px;color:#ccc">
+      Invested: <strong>${total_invested:,.2f}</strong> &nbsp;|&nbsp;
+      Current value: <strong>${total_current:,.2f}</strong> &nbsp;|&nbsp;
+      P&amp;L: <strong style="color:{summary_color}">${total_pnl:+,.2f}</strong>
+    </p>
     <table width="100%" cellpadding="0" cellspacing="0"
            style="border-collapse:collapse;background:#1a1a1a;border-radius:6px">
       <tr style="background:#111;color:#aaa;font-size:12px">
         <th style="padding:6px 12px;text-align:left">Ticker</th>
-        <th style="padding:6px 12px;text-align:left">TF / Entered</th>
-        <th style="padding:6px 12px;text-align:left">Entry</th>
-        <th style="padding:6px 12px;text-align:left">Now</th>
-        <th style="padding:6px 12px;text-align:left">Return</th>
+        <th style="padding:6px 12px;text-align:left">TF</th>
+        <th style="padding:6px 12px;text-align:left">Invested</th>
+        <th style="padding:6px 12px;text-align:left">Current Value</th>
+        <th style="padding:6px 12px;text-align:left">P&amp;L</th>
         <th style="padding:6px 12px;text-align:left">Status</th>
-        <th style="padding:6px 12px;text-align:left">Screener</th>
       </tr>
       {rows}
     </table>"""
 
 
-def _build_email_html(today_results, analysis, run_date, open_trades=None, close_all=None) -> str:
+def _build_headlines_section(news_by_ticker: dict, today_results: dict) -> str:
+    """Return an HTML block with GOOD/BAD headlines for today's top picks."""
+    top_tickers = list({
+        t
+        for tf in ["5d", "30d", "180d"]
+        for t in today_results.get(tf, {}).get("df", pd.DataFrame()).head(5).get("ticker", pd.Series()).tolist()
+    })
+
+    blocks = ""
+    for ticker in top_tickers:
+        articles = news_by_ticker.get(ticker, [])
+        notable  = [a for a in articles if a.get("sentiment") in ("GOOD", "BAD")]
+        if not notable:
+            continue
+
+        items = ""
+        for a in notable[:3]:
+            icon  = "🟢" if a["sentiment"] == "GOOD" else "🔴"
+            color = "#4caf50" if a["sentiment"] == "GOOD" else "#ef5350"
+            title = a.get("title", "")
+            link  = a.get("link", "")
+            reason = f" <span style='color:#aaa;font-size:11px'>— {a['reason']}</span>" if a.get("reason") else ""
+            pub   = a.get("published", "")
+            title_html = f'<a href="{link}" style="color:#e0e0e0;text-decoration:none">{title}</a>' if link else title
+            items += f"""
+            <li style="margin:6px 0;line-height:1.4">
+              <span style="color:{color}">{icon}</span> {title_html}{reason}
+              <span style="color:#555;font-size:11px;margin-left:6px">{pub}</span>
+            </li>"""
+
+        blocks += f"""
+        <div style="margin-bottom:16px">
+          <strong style="color:#00b4d8">{ticker}</strong>
+          <ul style="margin:4px 0 0 0;padding-left:20px;list-style:none">{items}</ul>
+        </div>"""
+
+    if not blocks:
+        return ""
+
+    return f"""
+    <h3 style="color:#00b4d8;margin:32px 0 8px">📰 Key Headlines</h3>
+    <div style="background:#1a1a1a;border-radius:6px;padding:16px">
+      {blocks}
+    </div>"""
+
+
+def _build_email_html(today_results, analysis, run_date, open_trades=None, close_all=None, news_by_ticker=None) -> str:
     regime_rows = ""
     picks_sections = ""
 
@@ -511,9 +565,10 @@ def _build_email_html(today_results, analysis, run_date, open_trades=None, close
           {rows}
         </table>"""
 
-    analysis_html    = analysis.replace("\n", "<br>") if analysis else "No analysis generated."
+    analysis_html     = analysis.replace("\n", "<br>") if analysis else "No analysis generated."
     portfolio_section = _build_portfolio_section(open_trades or [], close_all, today_results) \
                         if close_all is not None else ""
+    headlines_section = _build_headlines_section(news_by_ticker or {}, today_results)
 
     return f"""
     <!DOCTYPE html>
@@ -536,6 +591,8 @@ def _build_email_html(today_results, analysis, run_date, open_trades=None, close
 
       {picks_sections}
 
+      {headlines_section}
+
       <h3 style="color:#00b4d8;margin:32px 0 8px">AI Analysis</h3>
       <div style="background:#1a1a1a;border-left:4px solid #00b4d8;padding:16px;border-radius:4px;line-height:1.7">
         {analysis_html}
@@ -549,9 +606,25 @@ def _build_email_html(today_results, analysis, run_date, open_trades=None, close
     </html>"""
 
 
-def send_email(today_results, analysis, run_date, open_trades=None, close_all=None) -> None:
-    api_key  = os.environ.get("RESEND_API_KEY", "")
-    to_email = os.environ.get("ALERT_EMAIL", "raulcorreazepeda@gmail.com")
+def _owner_email_map() -> dict[str, str]:
+    """Build {owner: email} from environment variables.
+
+    Raul's email defaults to ALERT_EMAIL (or hardcoded fallback).
+    Additional owners: ALERT_EMAIL_SOFIA, ALERT_EMAIL_JOHN, etc.
+    """
+    mapping: dict[str, str] = {
+        "raul": os.environ.get("ALERT_EMAIL", "raulcorreazepeda@gmail.com"),
+    }
+    for key, val in os.environ.items():
+        if key.startswith("ALERT_EMAIL_") and val:
+            owner = key[len("ALERT_EMAIL_"):].lower()
+            mapping[owner] = val
+    return mapping
+
+
+def send_email(today_results, analysis, run_date, trades_by_owner: dict | None = None,
+               close_all=None, news_by_ticker=None) -> None:
+    api_key = os.environ.get("RESEND_API_KEY", "")
     if not api_key:
         print("  [skip] RESEND_API_KEY not set — skipping email.")
         return
@@ -563,16 +636,24 @@ def send_email(today_results, analysis, run_date, open_trades=None, close_all=No
         top_5d  = ", ".join(today_results["5d"]["df"].head(3)["ticker"].tolist())
         top_30d = ", ".join(today_results["30d"]["df"].head(3)["ticker"].tolist())
         regime  = "BULL" if today_results["5d"]["in_bull"] else "BEAR"
-        n_open  = len(open_trades) if open_trades else 0
-        port_tag = f" | {n_open} open positions" if n_open else ""
 
-        resend.Emails.send({
-            "from":    "R&S Screener <screener@resend.dev>",
-            "to":      [to_email],
-            "subject": f"📈 Daily Picks {run_date} — {regime} — 5d: {top_5d} | 30d: {top_30d}{port_tag}",
-            "html":    _build_email_html(today_results, analysis, run_date, open_trades, close_all),
-        })
-        print(f"  Email sent to {to_email}.")
+        email_map     = _owner_email_map()
+        trades_by_owner = trades_by_owner or {}
+
+        for owner, to_email in email_map.items():
+            open_trades = trades_by_owner.get(owner, [])
+            n_open      = len(open_trades)
+            port_tag    = f" | {n_open} open" if n_open else ""
+            resend.Emails.send({
+                "from":    "R&S Screener <screener@resend.dev>",
+                "to":      [to_email],
+                "subject": f"📈 Daily Picks {run_date} — {regime} — 5d: {top_5d} | 30d: {top_30d}{port_tag}",
+                "html":    _build_email_html(
+                    today_results, analysis, run_date,
+                    open_trades, close_all, news_by_ticker,
+                ),
+            })
+            print(f"  Email sent to {to_email} ({owner}).")
     except Exception as e:
         print(f"  [warn] Email failed: {e}")
 
@@ -708,16 +789,18 @@ def main():
     if analysis:
         print(f"\nAI ANALYSIS:\n{analysis[:800]}...")
 
-    # 6. Send email (with open portfolio positions)
-    open_trades = []
+    # 6. Send email (one per portfolio owner)
+    trades_by_owner: dict[str, list] = {}
     if db:
-        all_trades  = get_all_trades(db)
-        open_trades = [
-            t for t in all_trades
-            if not t.get("outcome") or t.get("outcome") == "OPEN"
-        ]
-        print(f"  Loaded {len(open_trades)} open positions for email.")
-    send_email(today_results, analysis, run_date, open_trades, data["close"])
+        from screener.database import get_all_owners
+        for owner in get_all_owners(db):
+            owner_trades = get_all_trades(db, owner=owner)
+            trades_by_owner[owner] = [
+                t for t in owner_trades
+                if not t.get("outcome") or t.get("outcome") == "OPEN"
+            ]
+            print(f"  Loaded {len(trades_by_owner[owner])} open positions for {owner}.")
+    send_email(today_results, analysis, run_date, trades_by_owner, data["close"], news_by_ticker)
 
     print("\n=== Job complete ===")
 

@@ -34,6 +34,7 @@ from screener import (
 from screener.database import (
     get_client as db_client,
     get_all_trades,
+    get_all_owners,
     save_trades_bulk,
     get_recent_picks,
     get_latest_ai_analysis,
@@ -383,14 +384,15 @@ def render_news_tab() -> None:
     selected_label = st.selectbox("Timeframe", list(available.keys()), key="news_tf_select")
     selected_tf    = available[selected_label]
 
-    n_stocks = st.slider("Stocks to analyze", 1, 10, 5, key="news_n_stocks")
+    n_stocks  = st.slider("Stocks to analyze", 1, 10, 5, key="news_n_stocks")
+    news_days = st.slider("News window (days)", 3, 14, 7, key="news_days")
 
     if st.button("Fetch & Classify News", type="primary", key="news_fetch_btn"):
         df      = st.session_state[f"df_{selected_tf}"]
         tickers = df.head(n_stocks)["ticker"].tolist()
 
         with st.spinner("Fetching headlines from Yahoo Finance…"):
-            news_by_ticker = fetch_recent_news(tickers, days=3)
+            news_by_ticker = fetch_recent_news(tickers, days=news_days)
 
         results: dict[str, list[dict]] = {}
         progress = st.progress(0, text="Classifying with Claude Haiku…")
@@ -420,7 +422,8 @@ def render_news_tab() -> None:
 
     results    = st.session_state["news_results"]
     tf_label   = st.session_state.get("news_tf_label", selected_label)
-    st.caption(f"Showing top-{len(results)} picks from {tf_label} screener — last 3 days")
+    days_label = st.session_state.get("news_days", 7)
+    st.caption(f"Showing top-{len(results)} picks from {tf_label} screener — last {days_label} days")
 
     for ticker, articles in results.items():
         good    = sum(1 for a in articles if a["sentiment"] == "GOOD")
@@ -429,7 +432,7 @@ def render_news_tab() -> None:
         total   = len(articles)
 
         if total == 0:
-            summary = "No news in last 3 days"
+            summary = f"No news in last {days_label} days"
         elif bad > good:
             summary = f"🔴 {bad} bad · {good} good · {neutral} neutral"
         elif good > bad:
@@ -461,9 +464,14 @@ def render_news_tab() -> None:
 # ---------------------------------------------------------------------------
 
 _TRADE_COLS = [
-    "date_entered", "ticker", "timeframe", "shares", "entry_price", "total_invested",
+    "date_entered", "ticker", "category", "timeframe", "shares", "entry_price", "total_invested",
     "screener_target", "screener_return_pct", "score", "signals",
     "exit_date", "exit_price", "actual_return_pct", "held_days", "outcome", "notes",
+]
+
+_CATEGORIES = [
+    "— (none)", "Tech", "Semiconductors", "AI / Cloud", "Networking",
+    "Financials", "Healthcare", "Energy", "Consumer", "Industrials", "Other",
 ]
 
 
@@ -492,10 +500,34 @@ def render_portfolio_tab() -> None:
 
     db = db_client()
 
+    # --- Portfolio / owner selector ---
+    if db:
+        existing_owners = get_all_owners(db)
+        pc1, pc2 = st.columns([2, 1])
+        owner = pc1.selectbox(
+            "Portfolio",
+            existing_owners + ["＋ New portfolio…"],
+            key="portfolio_owner",
+            format_func=lambda x: x.title() if x != "＋ New portfolio…" else x,
+        )
+        if owner == "＋ New portfolio…":
+            new_name = pc2.text_input("Portfolio name", placeholder="e.g. sofia").strip().lower()
+            if new_name:
+                owner = new_name
+            else:
+                st.info("Enter a name for the new portfolio above.")
+                return
+    else:
+        owner = "raul"
+
+    st.divider()
+
     # --- Upload / manual entry ---
     col_upload, col_manual = st.columns([1, 1])
     with col_upload:
-        uploaded = st.file_uploader("Upload trade CSV", type="csv", key="trade_upload")
+        uploaded = st.file_uploader(
+            f"Upload trades CSV for **{owner.title()}**", type="csv", key=f"trade_upload_{owner}"
+        )
         if uploaded:
             try:
                 import io as _io
@@ -514,25 +546,27 @@ def render_portfolio_tab() -> None:
                     if col not in new_df.columns:
                         new_df[col] = None
                 new_df = new_df[_TRADE_COLS]
+                new_df["owner"] = owner
                 if db:
                     rows = new_df.where(pd.notnull(new_df), None).to_dict("records")
                     save_trades_bulk(db, rows)
-                    st.success(f"Saved {len(rows)} trades to Supabase.")
+                    st.success(f"Saved {len(rows)} trades to {owner.title()}'s portfolio.")
                 else:
-                    st.session_state["local_trades"] = new_df
+                    st.session_state[f"local_trades_{owner}"] = new_df
                     st.success(f"Loaded {len(new_df)} trades (Supabase not connected — local only).")
             except Exception as e:
                 st.error(f"CSV parse error: {e}")
 
     with col_manual:
-        with st.expander("Add single trade"):
-            with st.form("add_trade"):
+        with st.expander(f"Add trade to {owner.title()}'s portfolio"):
+            with st.form(f"add_trade_{owner}"):
                 t1, t2 = st.columns(2)
                 ticker     = t1.text_input("Ticker").upper().strip()
                 tf         = t2.selectbox("Timeframe", ["5d", "30d", "180d", "— (no screener)"])
                 d_entered  = t1.date_input("Date entered", value=datetime.today())
                 entry_px   = t2.number_input("Entry price $", min_value=0.01, format="%.2f")
                 shares     = t1.number_input("Shares bought", min_value=0.0, format="%.4f")
+                category   = t2.selectbox("Category", _CATEGORIES)
                 target_px  = t2.number_input("Screener target $ (optional)", min_value=0.0, format="%.2f")
                 target_ret = t1.number_input("Screener exp. return % (optional)", format="%.2f")
                 notes      = st.text_input("Notes (optional)")
@@ -542,6 +576,8 @@ def render_portfolio_tab() -> None:
                     row = {
                         "date_entered":      str(d_entered),
                         "ticker":            ticker,
+                        "owner":             owner,
+                        "category":          category if category != "— (none)" else None,
                         "timeframe":         tf if tf != "— (no screener)" else None,
                         "shares":            float(shares) if shares else None,
                         "entry_price":       float(entry_px),
@@ -554,10 +590,11 @@ def render_portfolio_tab() -> None:
                     if db:
                         from screener.database import save_trade
                         save_trade(db, row)
-                        st.success(f"Trade {ticker} saved.")
+                        st.success(f"Trade {ticker} saved to {owner.title()}'s portfolio.")
                     else:
-                        local = st.session_state.get("local_trades", pd.DataFrame(columns=_TRADE_COLS))
-                        st.session_state["local_trades"] = pd.concat(
+                        local_key = f"local_trades_{owner}"
+                        local = st.session_state.get(local_key, pd.DataFrame(columns=_TRADE_COLS))
+                        st.session_state[local_key] = pd.concat(
                             [local, pd.DataFrame([row])], ignore_index=True
                         )
                         st.success(f"Trade {ticker} saved locally.")
@@ -567,14 +604,14 @@ def render_portfolio_tab() -> None:
     # --- Load trades ---
     trades_df = None
     if db:
-        raw_trades = get_all_trades(db)
+        raw_trades = get_all_trades(db, owner=owner)
         if raw_trades:
             trades_df = pd.DataFrame(raw_trades)
-    elif "local_trades" in st.session_state:
-        trades_df = st.session_state["local_trades"]
+    elif f"local_trades_{owner}" in st.session_state:
+        trades_df = st.session_state[f"local_trades_{owner}"]
 
     if trades_df is None or trades_df.empty:
-        st.info("No trades yet — upload a CSV or add one above.")
+        st.info(f"No trades yet for {owner.title()} — upload a CSV or add one above.")
         if not db:
             st.warning("Supabase not connected — trades only persist in this browser session.")
         return
@@ -609,13 +646,14 @@ def render_portfolio_tab() -> None:
         open_df["current_value"] = (open_df["current_price"] * open_df["shares"]).round(2)
 
         st.subheader("Open Positions")
+        open_df["category"] = open_df.get("category", pd.Series(dtype=str))
         show_open = open_df[[
-            "ticker", "timeframe", "date_entered", "shares", "entry_price",
+            "ticker", "category", "timeframe", "date_entered", "shares", "entry_price",
             "total_invested", "current_price", "current_value",
             "live_return_%", "P&L $", "screener_target", "screener_return_pct", "notes"
         ]].copy()
         show_open.columns = [
-            "Ticker", "TF", "Entered", "Shares", "Entry $",
+            "Ticker", "Category", "TF", "Entered", "Shares", "Entry $",
             "Invested $", "Now $", "Value $",
             "Return %", "P&L $", "Target $", "Screener %", "Notes"
         ]
@@ -654,10 +692,11 @@ def render_portfolio_tab() -> None:
     if not closed_df.empty:
         st.subheader("Closed Trades")
         closed_df["actual_return_pct"] = pd.to_numeric(closed_df["actual_return_pct"], errors="coerce")
-        show_closed = closed_df[["ticker", "timeframe", "date_entered", "exit_date",
+        closed_df["category"] = closed_df.get("category", pd.Series(dtype=str))
+        show_closed = closed_df[["ticker", "category", "timeframe", "date_entered", "exit_date",
                                   "entry_price", "exit_price", "actual_return_pct",
                                   "held_days", "outcome", "notes"]].copy()
-        show_closed.columns = ["Ticker", "TF", "Entered", "Exited",
+        show_closed.columns = ["Ticker", "Category", "TF", "Entered", "Exited",
                                "Entry $", "Exit $", "Return %", "Days", "Outcome", "Notes"]
         st.dataframe(
             show_closed,
