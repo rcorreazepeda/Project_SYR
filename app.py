@@ -493,13 +493,14 @@ def render_portfolio_tab() -> None:
             try:
                 import io as _io
                 raw_bytes = uploaded.read()
-                for _enc in ("utf-8", "utf-8-sig", "latin-1", "cp1252"):
+                new_df = None
+                for _enc in ("utf-8", "utf-8-sig", "latin-1", "mac_roman", "cp1252"):
                     try:
                         new_df = pd.read_csv(_io.BytesIO(raw_bytes), encoding=_enc)
                         break
-                    except (UnicodeDecodeError, Exception):
+                    except UnicodeDecodeError:
                         continue
-                else:
+                if new_df is None:
                     raise ValueError("Could not decode CSV — try saving as UTF-8 from Excel (Save As → CSV UTF-8)")
                 new_df.columns = [c.lower().strip().replace(" ", "_") for c in new_df.columns]
                 for col in _TRADE_COLS:
