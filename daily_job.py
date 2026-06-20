@@ -41,6 +41,9 @@ from screener.database import (
     save_screener_run,
     save_ai_analysis,
     get_recent_picks,
+    get_picks_pending_outcome,
+    update_pick_outcome,
+    get_picks_with_outcomes,
 )
 
 
@@ -108,86 +111,240 @@ def _run_timeframe(tf_key, data, tickers, sector_map):
 
 
 # ---------------------------------------------------------------------------
+# Outcome tracking
+# ---------------------------------------------------------------------------
+
+# Maps signal text fragments → readable label for win-rate reporting
+_SIGNAL_LABELS = {
+    "MACD bullish crossover (fresh)": "MACD fresh cross",
+    "MACD histogram positive":        "MACD positive",
+    "RSI":                            "RSI recovery",
+    "Stochastic":                     "Stoch crossover",
+    "OBV bullish divergence":         "OBV divergence",
+    "OBV rising":                     "OBV rising",
+    "Volume surge":                   "Volume surge",
+    "Price > SMA":                    "SMA aligned",
+    "Golden cross":                   "Golden cross",
+    "lower BB":                       "Bollinger bounce",
+    "RS vs SPY":                      "RS vs SPY",
+    "sector leader":                  "Sector leader",
+    "sector":                         "RS vs sector",
+    "VIX":                            "VIX sentiment",
+    "Breadth":                        "Breadth",
+}
+
+
+def check_outcomes(db, close_all: "pd.DataFrame") -> dict[str, list[dict]]:
+    """For each timeframe, find picks from hold_days ago and record actual outcome.
+
+    Returns summary dict {tf_key: [outcome_dicts]} for inclusion in AI prompt.
+    """
+    today = date.today()
+    summary: dict[str, list[dict]] = {}
+
+    for tf_key in ["5d", "30d", "180d"]:
+        cfg       = TIMEFRAMES[tf_key]
+        hold_days = cfg["hold_days"]
+        tp        = cfg["take_profit_pct"] / 100
+        sl        = cfg["stop_loss_pct"]   / 100
+        check_for = today - timedelta(days=hold_days)
+
+        picks = get_picks_pending_outcome(db, tf_key, str(check_for))
+        if not picks:
+            continue
+
+        outcomes = []
+        for pick in picks:
+            ticker      = pick["ticker"]
+            entry_price = float(pick["entry_price"])
+
+            if ticker not in close_all.columns:
+                continue
+
+            exit_price    = float(close_all[ticker].ffill().iloc[-1])
+            actual_return = (exit_price - entry_price) / entry_price
+
+            if actual_return >= tp:
+                outcome = "WIN"
+            elif actual_return <= -sl:
+                outcome = "LOSS"
+            else:
+                outcome = "PARTIAL"
+
+            update_pick_outcome(
+                db, pick["id"],
+                actual_return * 100,
+                exit_price,
+                outcome,
+                str(today),
+            )
+            outcomes.append({
+                "ticker":      ticker,
+                "outcome":     outcome,
+                "actual_pct":  round(actual_return * 100, 2),
+                "expected_pct": float(pick.get("expected_return_pct", 0)),
+                "signals":     pick.get("signals", ""),
+            })
+
+        if outcomes:
+            wins = sum(1 for o in outcomes if o["outcome"] == "WIN")
+            print(f"  {tf_key}: checked {len(outcomes)} picks from {check_for} — {wins}/{len(outcomes)} wins")
+            summary[tf_key] = outcomes
+
+    return summary
+
+
+def compute_signal_win_rates(picks_with_outcomes: list[dict]) -> dict[str, dict]:
+    """Parse signals column across all resolved picks → per-signal win rate."""
+    from collections import defaultdict
+    stats: dict[str, dict] = defaultdict(lambda: {"wins": 0, "losses": 0, "total": 0})
+
+    for pick in picks_with_outcomes:
+        outcome = pick.get("outcome")
+        if outcome not in ("WIN", "LOSS", "PARTIAL"):
+            continue
+        signals_str = pick.get("signals", "")
+        is_win      = outcome == "WIN"
+
+        for fragment, label in _SIGNAL_LABELS.items():
+            if fragment.lower() in signals_str.lower():
+                stats[label]["total"] += 1
+                if is_win:
+                    stats[label]["wins"] += 1
+                elif outcome == "LOSS":
+                    stats[label]["losses"] += 1
+
+    return {
+        label: {
+            **s,
+            "win_rate": round(s["wins"] / s["total"] * 100, 1) if s["total"] > 0 else 0,
+        }
+        for label, s in stats.items()
+        if s["total"] >= 3  # only report signals with enough data points
+    }
+
+
+# ---------------------------------------------------------------------------
 # AI analysis
 # ---------------------------------------------------------------------------
 
-def _build_ai_prompt(today_results, historical_picks, run_date):
-    """Build the prompt that Claude uses to analyze today's results and history."""
+def _build_ai_prompt(today_results, recent_outcomes, signal_win_rates, run_date):
+    """Build the prompt Claude uses to analyze today's results, actual outcomes, and signal stats."""
     lines = [
-        f"You are a quantitative analyst reviewing the S&P 500 screener results for {run_date}.",
-        "The screener uses technical indicators (RSI, MACD, Bollinger Bands, SMA alignment,",
-        "OBV, volume, ATR momentum, relative strength vs SPY and sector ETFs, VIX, breadth).",
+        f"You are a quantitative analyst reviewing the S&P 500 screener for {run_date}.",
+        "The screener scores stocks using: RSI, MACD, Bollinger Bands, SMA alignment,",
+        "OBV, volume surge, ATR momentum, RS vs SPY, RS vs sector ETF, VIX, market breadth.",
+        "A news sentiment score (GOOD=+4, BAD=−6, capped ±20) is blended into the final score.",
         "",
         "## TODAY'S TOP PICKS",
     ]
 
     for tf_key in ["5d", "30d", "180d"]:
-        r = today_results.get(tf_key, {})
-        df = r.get("df")
+        r   = today_results.get(tf_key, {})
+        df  = r.get("df")
+        cfg = TIMEFRAMES[tf_key]
         if df is None or df.empty:
             continue
-        cfg = TIMEFRAMES[tf_key]
-        lines.append(f"\n### {cfg['label']} (hold {cfg['hold_days']}d, TP +{cfg['take_profit_pct']}%, SL -{cfg['stop_loss_pct']}%)")
-        lines.append(f"Market regime: {'BULL' if r['in_bull'] else 'BEAR'}  |  VIX: {r['vix_val']:.1f}  |  Breadth: {r['breadth_pct']:.0f}%")
+        lines.append(
+            f"\n### {cfg['label']}  "
+            f"(hold {cfg['hold_days']}d | TP +{cfg['take_profit_pct']}% / SL −{cfg['stop_loss_pct']}%)"
+        )
+        lines.append(
+            f"Regime: {'BULL' if r['in_bull'] else 'BEAR'}  |  "
+            f"VIX: {r['vix_val']:.1f}  |  Breadth: {r['breadth_pct']:.0f}%"
+        )
         for _, row in df.head(10).iterrows():
             tech  = int(row.get("score", 0))
             news  = int(row.get("news_score", 0))
             combo = int(row.get("combined_score", tech))
             sigs  = "  ·  ".join(row.get("signals", [])[:3])
-            news_tag = f" | News {news:+d}" if news != 0 else ""
-            lines.append(f"  {row['ticker']:6s}  Tech:{tech:3d}{news_tag}  Combined:{combo:3d}  ${row['price']:.2f} → ${row.get('expected_price', 0):.2f}  [{sigs}]")
+            news_tag = f" News{news:+d}" if news != 0 else ""
+            lines.append(
+                f"  {row['ticker']:6s}  Tech:{tech:3d}{news_tag}  "
+                f"Combined:{combo:3d}  "
+                f"${row['price']:.2f}→${row.get('expected_price', 0):.2f}  [{sigs}]"
+            )
 
-    if historical_picks:
-        lines += ["", "## HISTORICAL PICKS (last 30 days, actual vs target)"]
-        by_date: dict[str, list] = {}
-        for p in historical_picks:
-            by_date.setdefault(p["run_date"], []).append(p)
-
-        for run_d in sorted(by_date.keys(), reverse=True)[:5]:
-            picks = by_date[run_d]
-            lines.append(f"\n### Run: {run_d}")
-            for p in picks[:5]:
+    # --- Real outcomes from previous runs ---
+    if recent_outcomes:
+        lines += ["", "## ACTUAL OUTCOMES (picks that completed their hold period today)"]
+        for tf_key, outcomes in recent_outcomes.items():
+            wins    = sum(1 for o in outcomes if o["outcome"] == "WIN")
+            losses  = sum(1 for o in outcomes if o["outcome"] == "LOSS")
+            partial = sum(1 for o in outcomes if o["outcome"] == "PARTIAL")
+            avg_ret = sum(o["actual_pct"] for o in outcomes) / len(outcomes)
+            lines.append(
+                f"\n### {TIMEFRAMES[tf_key]['label']} — "
+                f"{wins}W / {losses}L / {partial}P  avg return: {avg_ret:+.1f}%"
+            )
+            for o in outcomes:
+                beat = o["actual_pct"] - o["expected_pct"]
                 lines.append(
-                    f"  {p['ticker']:6s} tf:{p['timeframe']:5s}  "
-                    f"entry:${p['entry_price']:.2f}  "
-                    f"target:${p['target_price']:.2f} (+{p['expected_return_pct']:.1f}%)  "
-                    f"signals:{p['signals'][:60]}"
+                    f"  {o['ticker']:6s}  {o['outcome']:7s}  "
+                    f"actual:{o['actual_pct']:+.1f}%  expected:{o['expected_pct']:+.1f}%  "
+                    f"({'beat' if beat >= 0 else 'missed'} by {abs(beat):.1f}pp)  "
+                    f"signals: {o['signals'][:70]}"
                 )
     else:
-        lines += ["", "## HISTORICAL PICKS", "No historical data yet — this is the first run."]
+        lines += ["", "## ACTUAL OUTCOMES", "No picks completed their hold period today."]
+
+    # --- Signal win rates ---
+    if signal_win_rates:
+        lines += ["", "## SIGNAL WIN RATES (last 90 days, resolved picks only)"]
+        sorted_signals = sorted(
+            signal_win_rates.items(), key=lambda x: x[1]["win_rate"], reverse=True
+        )
+        for label, s in sorted_signals:
+            bar = "█" * int(s["win_rate"] / 10)
+            lines.append(
+                f"  {label:25s}  {s['win_rate']:5.1f}%  "
+                f"({s['wins']}W/{s['losses']}L of {s['total']})  {bar}"
+            )
+    else:
+        lines += ["", "## SIGNAL WIN RATES", "Not enough resolved picks yet to compute win rates."]
 
     lines += [
         "",
         "## YOUR TASK",
-        "Write a concise analyst note (300-500 words) covering:",
-        "1. **Market context** — regime, VIX, breadth, what it means for entries today",
-        "2. **Top 3 picks to watch** (across all timeframes) — name them and say why",
-        "3. **Signal performance** — based on historical picks, which signals are working?",
-        "   (e.g. 'MACD crossover entries have been consistent', 'Bollinger bounce setups have underperformed')",
-        "4. **Scoring suggestion** — one specific, actionable suggestion to improve the model",
-        "   (e.g. 'Increase OBV divergence weight for 30d since it precedes breakouts',",
-        "   'Add a -5 penalty when earnings are within 3 weeks for 180d picks')",
-        "5. **Risk flags** — anything to watch out for today",
+        "Write a concise analyst note (300-500 words) in these sections:",
         "",
-        "Be specific and direct. No filler. Write as if you are briefing a trader at 4:35 PM.",
+        "**1. Market context** — regime, VIX, breadth interpretation for today",
+        "",
+        "**2. Top 3 picks** — name specific tickers across timeframes and explain why",
+        "   (reference their strongest signals and news score if notable)",
+        "",
+        "**3. Signal scorecard** — what the win-rate data is telling us:",
+        "   - Which signals are consistently producing wins?",
+        "   - Which are underperforming? Be specific with percentages.",
+        "   - Has anything changed vs what you'd expect?",
+        "",
+        "**4. Scoring adjustment** — ONE specific, data-backed suggestion:",
+        "   Format: 'Adjust [signal] weight for [timeframe] from [X] to [Y] because [evidence]'",
+        "   Example: 'Increase score_macd_cross for 5d from 25 to 30 — MACD fresh cross",
+        "   has 71% win rate (22/31), highest of all signals, consistently beating target.'",
+        "   Only suggest if win-rate data supports it. Skip if data is thin.",
+        "",
+        "**5. Risk flags** — anything specific to watch today (earnings, VIX spike, weak breadth)",
+        "",
+        "Be direct. No filler. Write as if briefing a trader at 4:35 PM ET.",
     ]
 
     return "\n".join(lines)
 
 
-def run_ai_analysis(today_results, historical_picks, run_date):
+def run_ai_analysis(today_results, recent_outcomes, signal_win_rates, run_date):
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         print("[skip] ANTHROPIC_API_KEY not set — skipping AI analysis.")
         return None
 
-    prompt = _build_ai_prompt(today_results, historical_picks, run_date)
+    prompt = _build_ai_prompt(today_results, recent_outcomes, signal_win_rates, run_date)
     client = anthropic.Anthropic(api_key=api_key)
 
     print("  Sending to Claude Sonnet for analysis...")
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1500,
+        max_tokens=1800,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text
@@ -399,9 +556,12 @@ def main():
         df.index += 1
         today_results[tf_key]["df"] = df
 
-    # 4. Save to Supabase
-    print("\n[6/6] Saving to Supabase + running AI analysis...")
+    # 4. Save to Supabase + check outcomes
+    print("\n[6/6] Saving to Supabase + checking outcomes + AI analysis...")
     db = get_client()
+    recent_outcomes:   dict = {}
+    signal_win_rates:  dict = {}
+
     if db:
         for tf_key, result in today_results.items():
             save_screener_run(
@@ -410,14 +570,21 @@ def main():
                 TIMEFRAMES[tf_key],
             )
         print("  Screener picks saved.")
-        historical_picks = get_recent_picks(db, days=30)
-        print(f"  Loaded {len(historical_picks)} historical picks for analysis.")
+
+        # Check actual outcomes for picks that completed their hold period
+        print("  Checking outcomes for matured picks...")
+        recent_outcomes = check_outcomes(db, data["close"])
+
+        # Compute signal win rates from all resolved picks (last 90 days)
+        resolved_picks = get_picks_with_outcomes(db, days=90)
+        if resolved_picks:
+            signal_win_rates = compute_signal_win_rates(resolved_picks)
+            print(f"  Signal win rates computed from {len(resolved_picks)} resolved picks.")
     else:
-        historical_picks = []
         print("  [skip] Supabase not configured — skipping save.")
 
     # 5. AI analysis
-    analysis = run_ai_analysis(today_results, historical_picks, run_date)
+    analysis = run_ai_analysis(today_results, recent_outcomes, signal_win_rates, run_date)
     if analysis and db:
         top_picks = {
             tf: ", ".join(today_results[tf]["df"].head(5)["ticker"].tolist())

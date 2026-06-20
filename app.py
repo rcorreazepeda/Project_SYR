@@ -37,6 +37,7 @@ from screener.database import (
     save_trades_bulk,
     get_recent_picks,
     get_latest_ai_analysis,
+    get_picks_with_outcomes,
 )
 
 # ---------------------------------------------------------------------------
@@ -638,14 +639,13 @@ def render_performance_tab() -> None:
             st.markdown("""
 1. Go to [supabase.com](https://supabase.com) → New project (free tier)
 2. In SQL Editor, run the schema from `screener/database.py` (the docstring at the top)
-3. Settings → API → copy **Project URL** and **anon public** key
-4. Add to Streamlit Cloud secrets:
+3. Settings → API → copy **Project URL** and **service_role** key
+4. Add to Streamlit Cloud secrets and GitHub Actions secrets:
    ```
    SUPABASE_URL = "https://xxxx.supabase.co"
    SUPABASE_KEY = "eyJ..."
    ```
-5. Add the same to your `.env` locally
-6. The GitHub Actions job will automatically write picks after each daily run
+5. The GitHub Actions job writes picks + outcomes + AI analysis automatically Mon-Fri
             """)
         return
 
@@ -654,9 +654,103 @@ def render_performance_tab() -> None:
     if latest:
         st.subheader(f"AI Analysis — {latest['run_date']}")
         st.markdown(latest["analysis_text"])
-        st.caption(f"Top 5d picks: {latest.get('top_picks_5d', '—')}  |  "
-                   f"30d: {latest.get('top_picks_30d', '—')}  |  "
-                   f"180d: {latest.get('top_picks_180d', '—')}")
+        st.caption(
+            f"Top 5d: {latest.get('top_picks_5d', '—')}  |  "
+            f"30d: {latest.get('top_picks_30d', '—')}  |  "
+            f"180d: {latest.get('top_picks_180d', '—')}"
+        )
+        st.divider()
+
+    # --- Signal win rates (from resolved picks) ---
+    resolved = get_picks_with_outcomes(db, days=90)
+    if resolved:
+        from collections import defaultdict
+        _SIGNAL_LABELS = {
+            "MACD bullish crossover (fresh)": "MACD fresh cross",
+            "MACD histogram positive":        "MACD positive",
+            "RSI":                            "RSI recovery",
+            "Stochastic":                     "Stoch crossover",
+            "OBV bullish divergence":         "OBV divergence",
+            "OBV rising":                     "OBV rising",
+            "Volume surge":                   "Volume surge",
+            "Price > SMA":                    "SMA aligned",
+            "Golden cross":                   "Golden cross",
+            "lower BB":                       "Bollinger bounce",
+            "RS vs SPY":                      "RS vs SPY",
+            "sector leader":                  "Sector leader",
+            "sector":                         "RS vs sector",
+            "VIX":                            "VIX sentiment",
+            "Breadth":                        "Breadth",
+        }
+        stats: dict = defaultdict(lambda: {"wins": 0, "losses": 0, "total": 0})
+        for pick in resolved:
+            outcome = pick.get("outcome")
+            if outcome not in ("WIN", "LOSS", "PARTIAL"):
+                continue
+            sigs = pick.get("signals", "")
+            for fragment, label in _SIGNAL_LABELS.items():
+                if fragment.lower() in sigs.lower():
+                    stats[label]["total"] += 1
+                    if outcome == "WIN":
+                        stats[label]["wins"] += 1
+                    elif outcome == "LOSS":
+                        stats[label]["losses"] += 1
+
+        win_rate_rows = [
+            {
+                "Signal":   label,
+                "Win %":    round(s["wins"] / s["total"] * 100, 1) if s["total"] else 0,
+                "Wins":     s["wins"],
+                "Losses":   s["losses"],
+                "Total":    s["total"],
+            }
+            for label, s in stats.items() if s["total"] >= 3
+        ]
+
+        if win_rate_rows:
+            st.subheader("Signal Win Rates (last 90 days)")
+            wr_df = pd.DataFrame(win_rate_rows).sort_values("Win %", ascending=False)
+            st.dataframe(
+                wr_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Win %": st.column_config.ProgressColumn(
+                        "Win %", min_value=0, max_value=100, format="%.1f%%"
+                    ),
+                },
+            )
+            st.divider()
+
+    # --- Outcome summary ---
+    if resolved:
+        res_df = pd.DataFrame(resolved)
+        res_df["actual_return_pct"] = pd.to_numeric(res_df["actual_return_pct"], errors="coerce")
+
+        st.subheader("Outcome Summary (last 90 days)")
+        c1, c2, c3, c4 = st.columns(4)
+        total  = len(res_df)
+        wins   = (res_df["outcome"] == "WIN").sum()
+        losses = (res_df["outcome"] == "LOSS").sum()
+        avg    = res_df["actual_return_pct"].mean()
+        c1.metric("Total resolved picks", total)
+        c2.metric("Win rate", f"{wins/total*100:.0f}%", f"{wins}W / {losses}L")
+        c3.metric("Avg actual return", f"{avg:+.2f}%")
+        c4.metric("Avg expected return",
+                  f"{pd.to_numeric(res_df['expected_return_pct'], errors='coerce').mean():+.2f}%")
+
+        # Outcomes by timeframe
+        st.subheader("Win Rate by Timeframe")
+        tf_cols = st.columns(3)
+        for col, tf in zip(tf_cols, ["5d", "30d", "180d"]):
+            sub = res_df[res_df["timeframe"] == tf]
+            if not sub.empty:
+                w = (sub["outcome"] == "WIN").sum()
+                col.metric(
+                    f"{tf} — {len(sub)} picks",
+                    f"{w/len(sub)*100:.0f}% win rate",
+                    f"avg {sub['actual_return_pct'].mean():+.1f}%",
+                )
         st.divider()
 
     # --- Screener pick history ---
@@ -668,33 +762,25 @@ def render_performance_tab() -> None:
     picks_df = pd.DataFrame(picks)
     picks_df["run_date"] = pd.to_datetime(picks_df["run_date"])
 
-    # Runs by date
-    run_counts = picks_df.groupby("run_date").size().reset_index(name="picks")
-    st.subheader("Screener Runs (last 60 days)")
-    st.bar_chart(run_counts.set_index("run_date")["picks"])
-
-    # Top picks frequency
-    st.subheader("Most Frequently Picked Stocks")
+    st.subheader("Most Frequently Picked Stocks (last 60 days)")
     freq = picks_df["ticker"].value_counts().head(20).reset_index()
     freq.columns = ["Ticker", "Times Picked"]
     st.dataframe(freq, use_container_width=True, hide_index=True)
 
     # Score distributions per timeframe
-    st.subheader("Combined Score Distribution by Timeframe")
+    st.subheader("Avg Combined Score by Timeframe")
     c1, c2, c3 = st.columns(3)
     for col, tf in zip([c1, c2, c3], ["5d", "30d", "180d"]):
         sub = picks_df[picks_df["timeframe"] == tf]["combined_score"]
         if not sub.empty:
-            col.metric(f"{tf} avg score", f"{sub.mean():.0f}", f"max {sub.max()}")
+            col.metric(f"{tf}", f"{sub.mean():.0f} avg", f"max {sub.max()}")
 
-    # Raw picks table
     with st.expander("Raw screener picks data"):
-        st.dataframe(
-            picks_df[["run_date", "timeframe", "ticker", "technical_score",
-                       "news_score", "combined_score", "entry_price",
-                       "expected_return_pct", "signals"]],
-            use_container_width=True,
-        )
+        show_cols = ["run_date", "timeframe", "ticker", "technical_score",
+                     "news_score", "combined_score", "entry_price",
+                     "expected_return_pct", "outcome", "actual_return_pct", "signals"]
+        show_cols = [c for c in show_cols if c in picks_df.columns]
+        st.dataframe(picks_df[show_cols], use_container_width=True)
 
 
 # ---------------------------------------------------------------------------

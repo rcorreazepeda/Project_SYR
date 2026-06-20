@@ -171,3 +171,47 @@ def save_trade(client: "Client", trade: dict) -> None:
 def save_trades_bulk(client: "Client", trades: list[dict]) -> None:
     if trades:
         client.table("trades").upsert(trades).execute()
+
+
+def get_picks_pending_outcome(client: "Client", timeframe: str, run_date: str) -> list[dict]:
+    """Return picks from a specific run date that haven't been outcome-checked yet."""
+    resp = (
+        client.table("screener_picks")
+        .select("*")
+        .eq("timeframe", timeframe)
+        .eq("run_date", run_date)
+        .is_("outcome", "null")
+        .execute()
+    )
+    return resp.data or []
+
+
+def update_pick_outcome(
+    client: "Client",
+    pick_id: int,
+    actual_return_pct: float,
+    exit_price: float,
+    outcome: str,
+    checked_date: str,
+) -> None:
+    client.table("screener_picks").update({
+        "actual_return_pct":    round(actual_return_pct, 2),
+        "exit_price":           round(exit_price, 2),
+        "outcome":              outcome,
+        "outcome_checked_date": checked_date,
+    }).eq("id", pick_id).execute()
+
+
+def get_picks_with_outcomes(client: "Client", days: int = 90) -> list[dict]:
+    """Return all picks that have been outcome-checked in the last N days."""
+    from datetime import timedelta
+    since = str(date.today() - timedelta(days=days))
+    resp = (
+        client.table("screener_picks")
+        .select("*")
+        .gte("run_date", since)
+        .not_.is_("outcome", "null")
+        .order("run_date", desc=True)
+        .execute()
+    )
+    return resp.data or []
