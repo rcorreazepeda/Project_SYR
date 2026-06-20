@@ -13,7 +13,6 @@ What it does on each run:
 """
 import os
 import sys
-import json
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -40,10 +39,10 @@ from screener.database import (
     get_client,
     save_screener_run,
     save_ai_analysis,
-    get_recent_picks,
     get_picks_pending_outcome,
     update_pick_outcome,
     get_picks_with_outcomes,
+    get_all_trades,
 )
 
 
@@ -354,7 +353,106 @@ def run_ai_analysis(today_results, recent_outcomes, signal_win_rates, run_date):
 # Email
 # ---------------------------------------------------------------------------
 
-def _build_email_html(today_results, analysis, run_date) -> str:
+def _build_portfolio_section(open_trades: list[dict], close_all, today_results) -> str:
+    """Build the open positions HTML block for the daily email."""
+    if not open_trades:
+        return ""
+
+    # All tickers in today's top 20 across any timeframe
+    todays_picks = {
+        t
+        for tf in ["5d", "30d", "180d"]
+        for t in today_results.get(tf, {}).get("df", pd.DataFrame()).head(20).get("ticker", pd.Series()).tolist()
+    }
+
+    rows = ""
+    total_pnl = 0.0
+
+    for trade in open_trades:
+        ticker      = trade.get("ticker", "")
+        entry_price = float(trade.get("entry_price") or 0)
+        tf_key      = trade.get("timeframe", "")
+        entered     = trade.get("date_entered", "")
+
+        if not ticker or entry_price == 0:
+            continue
+
+        # Current price from already-downloaded data
+        if ticker in close_all.columns:
+            current = float(close_all[ticker].ffill().iloc[-1])
+        else:
+            continue
+
+        shares  = float(trade.get("shares") or 1)
+        pnl_pct = (current - entry_price) / entry_price * 100
+        pnl_usd = (current - entry_price) * shares
+        total_pnl += pnl_usd
+
+        # Status vs take profit / stop loss
+        cfg = TIMEFRAMES.get(tf_key, {})
+        tp  = float(cfg.get("take_profit_pct", 20))
+        sl  = float(cfg.get("stop_loss_pct", 10))
+
+        if pnl_pct >= tp:
+            status     = "✅ Hit target"
+            status_col = "#4caf50"
+        elif pnl_pct >= tp * 0.8:
+            status     = "🎯 Near target"
+            status_col = "#8bc34a"
+        elif pnl_pct <= -sl:
+            status     = "🔴 Stop triggered"
+            status_col = "#ef5350"
+        elif pnl_pct <= -sl * 0.8:
+            status     = "⚠️ Near stop"
+            status_col = "#ff9800"
+        elif pnl_pct >= 0:
+            status     = "🟢 Winning"
+            status_col = "#4caf50"
+        else:
+            status     = "🔵 Holding"
+            status_col = "#9e9e9e"
+
+        still_liked = "⭐ Still in picks" if ticker in todays_picks else ""
+        pnl_color   = "#4caf50" if pnl_pct >= 0 else "#ef5350"
+
+        rows += f"""
+        <tr style="border-bottom:1px solid #2a2a2a">
+          <td style="padding:8px 12px;font-weight:700">{ticker}</td>
+          <td style="padding:8px 12px;color:#aaa;font-size:12px">{tf_key or '—'}  {entered}</td>
+          <td style="padding:8px 12px">${entry_price:.2f}</td>
+          <td style="padding:8px 12px">${current:.2f}</td>
+          <td style="padding:8px 12px;color:{pnl_color};font-weight:700">{pnl_pct:+.2f}%</td>
+          <td style="padding:8px 12px;color:{status_col};font-size:13px">{status}</td>
+          <td style="padding:8px 12px;font-size:12px;color:#f0c040">{still_liked}</td>
+        </tr>"""
+
+    if not rows:
+        return ""
+
+    pnl_color = "#4caf50" if total_pnl >= 0 else "#ef5350"
+    return f"""
+    <h3 style="color:#00b4d8;margin:32px 0 8px">
+      💼 Open Positions
+      <span style="font-weight:400;font-size:14px;color:{pnl_color}">
+        — Total P&L {total_pnl:+.2f}$
+      </span>
+    </h3>
+    <table width="100%" cellpadding="0" cellspacing="0"
+           style="border-collapse:collapse;background:#1a1a1a;border-radius:6px">
+      <tr style="background:#111;color:#aaa;font-size:12px">
+        <th style="padding:6px 12px;text-align:left">Ticker</th>
+        <th style="padding:6px 12px;text-align:left">TF / Entered</th>
+        <th style="padding:6px 12px;text-align:left">Entry</th>
+        <th style="padding:6px 12px;text-align:left">Now</th>
+        <th style="padding:6px 12px;text-align:left">Return</th>
+        <th style="padding:6px 12px;text-align:left">Status</th>
+        <th style="padding:6px 12px;text-align:left">Screener</th>
+      </tr>
+      {rows}
+    </table>"""
+
+
+def _build_email_html(today_results, analysis, run_date, open_trades=None, close_all=None) -> str:
     regime_rows = ""
     picks_sections = ""
 
@@ -413,7 +511,9 @@ def _build_email_html(today_results, analysis, run_date) -> str:
           {rows}
         </table>"""
 
-    analysis_html = analysis.replace("\n", "<br>") if analysis else "No analysis generated."
+    analysis_html    = analysis.replace("\n", "<br>") if analysis else "No analysis generated."
+    portfolio_section = _build_portfolio_section(open_trades or [], close_all, today_results) \
+                        if close_all is not None else ""
 
     return f"""
     <!DOCTYPE html>
@@ -432,6 +532,8 @@ def _build_email_html(today_results, analysis, run_date) -> str:
         {regime_rows}
       </table>
 
+      {portfolio_section}
+
       {picks_sections}
 
       <h3 style="color:#00b4d8;margin:32px 0 8px">AI Analysis</h3>
@@ -447,8 +549,8 @@ def _build_email_html(today_results, analysis, run_date) -> str:
     </html>"""
 
 
-def send_email(today_results, analysis, run_date) -> None:
-    api_key = os.environ.get("RESEND_API_KEY", "")
+def send_email(today_results, analysis, run_date, open_trades=None, close_all=None) -> None:
+    api_key  = os.environ.get("RESEND_API_KEY", "")
     to_email = os.environ.get("ALERT_EMAIL", "raulcorreazepeda@gmail.com")
     if not api_key:
         print("  [skip] RESEND_API_KEY not set — skipping email.")
@@ -461,12 +563,14 @@ def send_email(today_results, analysis, run_date) -> None:
         top_5d  = ", ".join(today_results["5d"]["df"].head(3)["ticker"].tolist())
         top_30d = ", ".join(today_results["30d"]["df"].head(3)["ticker"].tolist())
         regime  = "BULL" if today_results["5d"]["in_bull"] else "BEAR"
+        n_open  = len(open_trades) if open_trades else 0
+        port_tag = f" | {n_open} open positions" if n_open else ""
 
         resend.Emails.send({
             "from":    "R&S Screener <screener@resend.dev>",
             "to":      [to_email],
-            "subject": f"📈 Daily Picks {run_date} — {regime} — 5d: {top_5d} | 30d: {top_30d}",
-            "html":    _build_email_html(today_results, analysis, run_date),
+            "subject": f"📈 Daily Picks {run_date} — {regime} — 5d: {top_5d} | 30d: {top_30d}{port_tag}",
+            "html":    _build_email_html(today_results, analysis, run_date, open_trades, close_all),
         })
         print(f"  Email sent to {to_email}.")
     except Exception as e:
@@ -535,7 +639,7 @@ def main():
     news_scores: dict[str, int] = {}
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    for i, ticker in enumerate(all_top):
+    for ticker in all_top:
         articles = news_by_ticker.get(ticker, [])
         if articles and api_key:
             try:
@@ -604,8 +708,16 @@ def main():
     if analysis:
         print(f"\nAI ANALYSIS:\n{analysis[:800]}...")
 
-    # 6. Send email
-    send_email(today_results, analysis, run_date)
+    # 6. Send email (with open portfolio positions)
+    open_trades = []
+    if db:
+        all_trades  = get_all_trades(db)
+        open_trades = [
+            t for t in all_trades
+            if not t.get("outcome") or t.get("outcome") == "OPEN"
+        ]
+        print(f"  Loaded {len(open_trades)} open positions for email.")
+    send_email(today_results, analysis, run_date, open_trades, data["close"])
 
     print("\n=== Job complete ===")
 
