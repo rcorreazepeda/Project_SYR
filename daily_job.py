@@ -365,6 +365,25 @@ def _build_portfolio_section(open_trades: list[dict], close_all, today_results) 
         for t in today_results.get(tf, {}).get("df", pd.DataFrame()).head(20).get("ticker", pd.Series()).tolist()
     }
 
+    # Pre-fetch prices for tickers not in the screener bulk download (ETFs, crypto, etc.)
+    extra_tickers = [
+        t for t in {tr.get("ticker", "") for tr in open_trades}
+        if t and t not in close_all.columns
+    ]
+    extra_prices: dict[str, float] = {}
+    if extra_tickers:
+        try:
+            raw = yf.download(extra_tickers, period="2d", auto_adjust=True, progress=False)
+            closes = raw["Close"].ffill()
+            if isinstance(closes, pd.Series):
+                extra_prices[extra_tickers[0]] = float(closes.iloc[-1])
+            else:
+                last = closes.iloc[-1]
+                extra_prices = {str(t): float(last[t]) for t in extra_tickers
+                                if t in last.index and not pd.isna(last[t])}
+        except Exception:
+            pass
+
     rows = ""
     total_pnl       = 0.0
     total_invested  = 0.0
@@ -379,9 +398,10 @@ def _build_portfolio_section(open_trades: list[dict], close_all, today_results) 
         if not ticker or entry_price == 0:
             continue
 
-        # Current price from already-downloaded data
         if ticker in close_all.columns:
             current = float(close_all[ticker].ffill().iloc[-1])
+        elif ticker in extra_prices:
+            current = extra_prices[ticker]
         else:
             continue
 
