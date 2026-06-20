@@ -106,7 +106,12 @@ Rules:
     )
 
     try:
-        classifications = json.loads(response.content[0].text)
+        raw_text = response.content[0].text.strip()
+        # Strip markdown code fences if present (```json ... ``` or ``` ... ```)
+        if raw_text.startswith("```"):
+            lines = raw_text.split("\n")
+            raw_text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        classifications = json.loads(raw_text)
         idx_map = {c["index"]: c for c in classifications}
         for i, article in enumerate(articles):
             match = idx_map.get(i + 1, {})
