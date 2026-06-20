@@ -588,7 +588,7 @@ def render_portfolio_tab() -> None:
                 ticker     = _normalize_ticker(t1.text_input("Ticker"))
                 tf         = t2.selectbox("Timeframe", ["5d", "30d", "180d", "— (no screener)"])
                 d_entered  = t1.date_input("Date entered", value=datetime.today())
-                entry_px   = t2.number_input("Entry price $", min_value=0.01, format="%.2f")
+                entry_px   = t2.number_input("Entry price $", min_value=0.000001, format="%.6f")
                 shares     = t1.number_input("Shares bought", min_value=0.0, format="%.8f")
                 category   = t2.selectbox("Category", _CATEGORIES)
                 target_px  = t2.number_input("Screener target $ (optional)", min_value=0.0, format="%.2f")
