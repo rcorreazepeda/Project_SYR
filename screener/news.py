@@ -5,6 +5,49 @@ import yfinance as yf
 import anthropic
 
 
+def classify_ticker_categories(tickers: list[str]) -> dict[str, str]:
+    """Use Claude Haiku to classify a list of tickers into concise category labels.
+
+    Returns {ticker: category_label}. Tickers that can't be classified get 'Other'.
+    """
+    if not tickers:
+        return {}
+
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        return {t: "Other" for t in tickers}
+
+    ticker_list = ", ".join(tickers)
+    prompt = f"""Classify each stock/ETF/crypto ticker into a concise investment category.
+
+Tickers: {ticker_list}
+
+Rules:
+- Use specific, descriptive labels (e.g. "Semiconductors / AI", "Software / Cloud", "Cybersecurity", "Broad Market ETF", "Short-Term Treasuries", "Crypto", "Healthcare", "Consumer Technology")
+- For crypto add the exchange suffix context: BTC-USD → "Crypto"
+- For broad ETFs (SPY, VOO, QQQ): "Broad Market ETF"
+- For bond/treasury ETFs (SGOV, SHV, BIL): "Short-Term Treasuries"
+- Keep labels under 30 characters
+
+Return ONLY valid JSON: {{"TICKER": "Category", ...}}"""
+
+    client = anthropic.Anthropic(api_key=key)
+    response = client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=400,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    try:
+        raw = response.content[0].text.strip()
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        return json.loads(raw)
+    except Exception:
+        return {t: "Other" for t in tickers}
+
+
 def compute_news_score(articles: list[dict]) -> tuple[int, str]:
     """Return (news_score, label) for a classified article list.
 

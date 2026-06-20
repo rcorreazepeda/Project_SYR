@@ -28,6 +28,7 @@ from screener import (
     fetch_recent_news,
     classify_news,
     compute_news_score,
+    classify_ticker_categories,
     get_ticker_sector_etf_map,
     SECTOR_ETFS,
 )
@@ -596,11 +597,15 @@ def render_portfolio_tab() -> None:
                 notes      = st.text_input("Notes (optional)")
                 submitted  = st.form_submit_button("Save trade")
                 if submitted and ticker:
+                    auto_cat = None
+                    if category == "— (none)":
+                        with st.spinner(f"Auto-classifying {ticker}…"):
+                            auto_cat = classify_ticker_categories([ticker]).get(ticker)
                     row = {
                         "date_entered":      str(d_entered),
                         "ticker":            ticker,
                         "owner":             owner,
-                        "category":          category if category != "— (none)" else None,
+                        "category":          auto_cat or (category if category != "— (none)" else None),
                         "timeframe":         tf if tf != "— (no screener)" else None,
                         "shares":            float(shares) if shares else None,
                         "entry_price":       float(entry_px),
@@ -609,6 +614,8 @@ def render_portfolio_tab() -> None:
                         "notes":             notes or None,
                         "outcome":           "OPEN",
                     }
+                    if auto_cat:
+                        st.info(f"Auto-classified {ticker} → {auto_cat}")
                     if db:
                         from screener.database import save_trade
                         save_trade(db, row)
@@ -622,6 +629,25 @@ def render_portfolio_tab() -> None:
                         st.success(f"Trade {ticker} saved locally.")
 
     st.divider()
+
+    # --- Bulk auto-classify ---
+    if db and st.button("🤖 Auto-classify missing categories", key="auto_classify_btn"):
+        all_trades = get_all_trades(db, owner=owner)
+        unclassified = list({
+            t["ticker"] for t in all_trades
+            if not t.get("category") and t.get("ticker")
+        })
+        if not unclassified:
+            st.success("All tickers already have a category.")
+        else:
+            with st.spinner(f"Classifying {len(unclassified)} tickers with Claude…"):
+                categories = classify_ticker_categories(unclassified)
+            from screener.database import save_trade
+            for ticker_key, cat in categories.items():
+                db.table("trades").update({"category": cat}).eq("ticker", ticker_key).eq("owner", owner).execute()
+            st.success(f"Classified {len(categories)} tickers: " +
+                       ", ".join(f"{t} → {c}" for t, c in categories.items()))
+            st.rerun()
 
     # --- Load trades ---
     trades_df = None
