@@ -181,6 +181,40 @@ def save_trade(client: "Client", trade: dict) -> None:
     client.table("trades").upsert(trade).execute()
 
 
+def close_trade(client: "Client", trade_id: int, exit_price: float,
+                exit_date: str, actual_return_pct: float) -> None:
+    outcome = "WIN" if actual_return_pct > 0 else "LOSS"
+    client.table("trades").update({
+        "exit_price":        round(exit_price, 6),
+        "exit_date":         exit_date,
+        "actual_return_pct": round(actual_return_pct, 4),
+        "outcome":           outcome,
+    }).eq("id", trade_id).execute()
+
+
+def dca_trade(client: "Client", trade_id: int, added_shares: float,
+              added_price: float, old_shares: float, old_price: float) -> None:
+    total_shares = old_shares + added_shares
+    avg_price    = (old_shares * old_price + added_shares * added_price) / total_shares
+    client.table("trades").update({
+        "shares":      round(total_shares, 8),
+        "entry_price": round(avg_price, 6),
+    }).eq("id", trade_id).execute()
+
+
+def get_open_trade(client: "Client", ticker: str, owner: str) -> Optional[dict]:
+    resp = (
+        client.table("trades")
+        .select("*")
+        .eq("ticker", ticker)
+        .eq("owner", owner)
+        .eq("outcome", "OPEN")
+        .limit(1)
+        .execute()
+    )
+    return resp.data[0] if resp.data else None
+
+
 def save_trades_bulk(client: "Client", trades: list[dict]) -> None:
     if trades:
         client.table("trades").upsert(trades).execute()

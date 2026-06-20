@@ -40,6 +40,9 @@ from screener.database import (
     get_recent_picks,
     get_latest_ai_analysis,
     get_picks_with_outcomes,
+    close_trade,
+    dca_trade,
+    get_open_trade,
 )
 
 # ---------------------------------------------------------------------------
@@ -601,30 +604,55 @@ def render_portfolio_tab() -> None:
                     if category == "— (none)":
                         with st.spinner(f"Auto-classifying {ticker}…"):
                             auto_cat = classify_ticker_categories([ticker]).get(ticker)
-                    row = {
-                        "date_entered":      str(d_entered),
-                        "ticker":            ticker,
-                        "owner":             owner,
-                        "category":          auto_cat or (category if category != "— (none)" else None),
-                        "timeframe":         tf if tf != "— (no screener)" else None,
-                        "shares":            float(shares) if shares else None,
-                        "entry_price":       float(entry_px),
-                        "screener_target":   float(target_px) if target_px else None,
-                        "screener_return_pct": float(target_ret) if target_ret else None,
-                        "notes":             notes or None,
-                        "outcome":           "OPEN",
-                    }
                     if auto_cat:
                         st.info(f"Auto-classified {ticker} → {auto_cat}")
+
                     if db:
-                        from screener.database import save_trade
-                        save_trade(db, row)
-                        st.success(f"Trade {ticker} saved to {owner.title()}'s portfolio.")
+                        existing = get_open_trade(db, ticker, owner)
+                        if existing and shares:
+                            # DCA — weighted average cost
+                            old_shares = float(existing.get("shares") or 0)
+                            old_price  = float(existing.get("entry_price") or 0)
+                            new_shares = float(shares)
+                            new_price  = float(entry_px)
+                            if old_shares > 0 and old_price > 0:
+                                total   = old_shares + new_shares
+                                avg_px  = (old_shares * old_price + new_shares * new_price) / total
+                                dca_trade(db, int(existing["id"]), new_shares, new_price, old_shares, old_price)
+                                st.success(
+                                    f"Added {new_shares} shares to {ticker}. "
+                                    f"New total: {total:.8g} shares @ ${avg_px:.6f} avg cost."
+                                )
+                                st.rerun()
+                            else:
+                                st.warning("Existing position has no shares — saving as new trade.")
+                                existing = None
+
+                        if not existing:
+                            from screener.database import save_trade
+                            save_trade(db, {
+                                "date_entered":        str(d_entered),
+                                "ticker":              ticker,
+                                "owner":               owner,
+                                "category":            auto_cat or (category if category != "— (none)" else None),
+                                "timeframe":           tf if tf != "— (no screener)" else None,
+                                "shares":              float(shares) if shares else None,
+                                "entry_price":         float(entry_px),
+                                "screener_target":     float(target_px) if target_px else None,
+                                "screener_return_pct": float(target_ret) if target_ret else None,
+                                "notes":               notes or None,
+                                "outcome":             "OPEN",
+                            })
+                            st.success(f"Trade {ticker} saved to {owner.title()}'s portfolio.")
                     else:
                         local_key = f"local_trades_{owner}"
                         local = st.session_state.get(local_key, pd.DataFrame(columns=_TRADE_COLS))
                         st.session_state[local_key] = pd.concat(
-                            [local, pd.DataFrame([row])], ignore_index=True
+                            [local, pd.DataFrame([{
+                                "date_entered": str(d_entered), "ticker": ticker,
+                                "shares": float(shares) if shares else None,
+                                "entry_price": float(entry_px), "outcome": "OPEN",
+                            }])], ignore_index=True
                         )
                         st.success(f"Trade {ticker} saved locally.")
 
@@ -682,6 +710,25 @@ def render_portfolio_tab() -> None:
         open_df["live_return_%"]  = (
             (open_df["current_price"] - open_df["entry_price"]) / open_df["entry_price"] * 100
         ).round(2)
+
+        # --- Close a position ---
+        with st.expander("🔴 Close a position"):
+            open_tickers = open_df["ticker"].tolist()
+            close_ticker = st.selectbox("Select position to close", open_tickers, key="close_ticker_sel")
+            if close_ticker:
+                pos = open_df[open_df["ticker"] == close_ticker].iloc[0]
+                auto_px   = live_px.get(close_ticker, 0.0)
+                exit_px   = st.number_input("Exit price $", value=float(auto_px), format="%.6f", key="close_exit_px")
+                exit_date = st.date_input("Exit date", value=datetime.today(), key="close_exit_date")
+                if entry_val := float(pos["entry_price"]):
+                    ret_pct = (exit_px - entry_val) / entry_val * 100
+                    color   = "green" if ret_pct >= 0 else "red"
+                    st.markdown(f"Return: :{color}[**{ret_pct:+.2f}%**]")
+                if st.button("Confirm close", type="primary", key="close_confirm_btn"):
+                    trade_id = int(pos["id"])
+                    close_trade(db, trade_id, exit_px, str(exit_date), ret_pct)
+                    st.success(f"Closed {close_ticker} at ${exit_px:.2f} ({ret_pct:+.2f}%)")
+                    st.rerun()
 
         st.subheader("Open Positions")
         open_df["category"] = open_df.get("category", pd.Series(dtype=str))
