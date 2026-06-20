@@ -596,7 +596,6 @@ def render_portfolio_tab() -> None:
                 notes      = st.text_input("Notes (optional)")
                 submitted  = st.form_submit_button("Save trade")
                 if submitted and ticker:
-                    total_inv = round(float(shares) * float(entry_px), 2) if shares else None
                     row = {
                         "date_entered":      str(d_entered),
                         "ticker":            ticker,
@@ -605,7 +604,6 @@ def render_portfolio_tab() -> None:
                         "timeframe":         tf if tf != "— (no screener)" else None,
                         "shares":            float(shares) if shares else None,
                         "entry_price":       float(entry_px),
-                        "total_invested":    total_inv,
                         "screener_target":   float(target_px) if target_px else None,
                         "screener_return_pct": float(target_ret) if target_ret else None,
                         "notes":             notes or None,
@@ -648,26 +646,16 @@ def render_portfolio_tab() -> None:
     if not open_df.empty:
         live_px = _fetch_live_prices(open_df["ticker"].unique().tolist())
         open_df["current_price"] = open_df["ticker"].map(live_px)
-        open_df["entry_price"]   = pd.to_numeric(open_df["entry_price"],   errors="coerce")
-        open_df["shares"]        = pd.to_numeric(open_df.get("shares"),    errors="coerce")
-        open_df["total_invested"]= pd.to_numeric(open_df.get("total_invested"), errors="coerce")
+        open_df["entry_price"] = pd.to_numeric(open_df["entry_price"], errors="coerce")
+        open_df["shares"]      = pd.to_numeric(open_df.get("shares"), errors="coerce")
 
-        open_df["live_return_%"] = (
+        # All monetary values derived from shares × price — never from stored columns
+        open_df["total_invested"] = (open_df["shares"] * open_df["entry_price"]).round(2)
+        open_df["current_value"]  = (open_df["shares"] * open_df["current_price"]).round(2)
+        open_df["P&L $"]          = (open_df["current_value"] - open_df["total_invested"]).round(2)
+        open_df["live_return_%"]  = (
             (open_df["current_price"] - open_df["entry_price"]) / open_df["entry_price"] * 100
         ).round(2)
-
-        # P&L in $ — use shares if available, else per-share difference
-        open_df["P&L $"] = (
-            (open_df["current_price"] - open_df["entry_price"]) * open_df["shares"]
-        ).round(2)
-        # Fill in P&L for rows without shares (show per-share instead)
-        no_shares = open_df["shares"].isna()
-        open_df.loc[no_shares, "P&L $"] = (
-            open_df.loc[no_shares, "current_price"] - open_df.loc[no_shares, "entry_price"]
-        ).round(2)
-
-        # Current value
-        open_df["current_value"] = (open_df["current_price"] * open_df["shares"]).round(2)
 
         st.subheader("Open Positions")
         open_df["category"] = open_df.get("category", pd.Series(dtype=str))
@@ -697,10 +685,8 @@ def render_portfolio_tab() -> None:
             },
         )
 
-        # Portfolio summary metrics
-        total_invested = open_df["total_invested"].fillna(
-            open_df["entry_price"] * open_df["shares"]
-        ).sum()
+        # Portfolio summary metrics — all derived
+        total_invested = open_df["total_invested"].sum()
         total_value  = open_df["current_value"].sum()
         total_pnl    = open_df["P&L $"].sum()
         positive     = (open_df["live_return_%"] > 0).sum()

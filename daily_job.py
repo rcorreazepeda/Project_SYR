@@ -406,7 +406,7 @@ def _build_portfolio_section(open_trades: list[dict], close_all, today_results) 
             continue
 
         shares       = float(trade.get("shares") or 1)
-        invested     = float(trade.get("total_invested") or 0) or round(shares * entry_price, 2)
+        invested     = round(shares * entry_price, 2)
         current_val  = round(shares * current, 2)
         pnl_pct      = (current - entry_price) / entry_price * 100
         pnl_usd      = current_val - invested
@@ -755,21 +755,6 @@ def _build_email_html(today_results, analysis, run_date, open_trades=None, close
     </body>
     </html>"""
 
-
-def _owner_email_map() -> dict[str, str]:
-    """Build {owner: email} from environment variables.
-
-    Raul's email defaults to ALERT_EMAIL (or hardcoded fallback).
-    Additional owners: ALERT_EMAIL_SOFIA, ALERT_EMAIL_JOHN, etc.
-    """
-    mapping: dict[str, str] = {
-        "raul": os.environ.get("ALERT_EMAIL", "raulcorreazepeda@gmail.com"),
-    }
-    for key, val in os.environ.items():
-        if key.startswith("ALERT_EMAIL_") and val:
-            owner = key[len("ALERT_EMAIL_"):].lower()
-            mapping[owner] = val
-    return mapping
 
 
 def send_email(today_results, analysis, run_date, trades_by_owner: dict | None = None,
