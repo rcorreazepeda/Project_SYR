@@ -589,7 +589,7 @@ def render_portfolio_tab() -> None:
                 tf         = t2.selectbox("Timeframe", ["5d", "30d", "180d", "— (no screener)"])
                 d_entered  = t1.date_input("Date entered", value=datetime.today())
                 entry_px   = t2.number_input("Entry price $", min_value=0.01, format="%.2f")
-                shares     = t1.number_input("Shares bought", min_value=0.0, format="%.4f")
+                shares     = t1.number_input("Shares bought", min_value=0.0, format="%.8f")
                 category   = t2.selectbox("Category", _CATEGORIES)
                 target_px  = t2.number_input("Screener target $ (optional)", min_value=0.0, format="%.2f")
                 target_ret = t1.number_input("Screener exp. return % (optional)", format="%.2f")
@@ -685,7 +685,7 @@ def render_portfolio_tab() -> None:
             show_open,
             use_container_width=True,
             column_config={
-                "Shares":     st.column_config.NumberColumn("Shares",     format="%.2f"),
+                "Shares":     st.column_config.NumberColumn("Shares",     format="%.8f"),
                 "Return %":   st.column_config.NumberColumn("Return %",   format="%+.2f%%"),
                 "P&L $":      st.column_config.NumberColumn("P&L $",      format="%+.2f"),
                 "Entry $":    st.column_config.NumberColumn("Entry $",    format="$%.2f"),
