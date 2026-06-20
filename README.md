@@ -1,6 +1,6 @@
 # R&S Stock Plan — S&P 500 Multi-Timeframe Screener
 
-Ranks all S&P 500 stocks by technical setup quality across **three holding horizons** — 5-day swing, 30-day position, and 180-day trend. Runs automatically every weekday at 4:30 PM ET and saves results to a database for historical tracking.
+Ranks all S&P 500 stocks by technical setup quality across **three holding horizons** — 5-day swing, 30-day position, and 180-day trend. Runs automatically every weekday at 4:30 PM ET, saves results to a database, and emails a daily report with top picks, news headlines, and open portfolio P&L.
 
 Live app: **https://projectsyr.streamlit.app/**
 
@@ -9,10 +9,12 @@ Live app: **https://projectsyr.streamlit.app/**
 ## What it does
 
 - Scores every S&P 500 stock using RSI, MACD, Bollinger Bands, OBV, volume, ATR momentum, relative strength vs SPY and sector ETFs, VIX sentiment, and market breadth
-- Blends in **news sentiment** (Claude Haiku classifies last 3 days of headlines — GOOD/BAD/NEUTRAL) into a combined score
+- Blends in **news sentiment** (Claude Haiku classifies recent headlines — GOOD/BAD/NEUTRAL) into a combined score
 - Runs **automatically Mon-Fri at 4:30 PM ET** via GitHub Actions, saves picks to Supabase
 - **Claude Sonnet analyzes** each daily run — reviews signal accuracy vs prior picks and suggests scoring improvements
-- **Portfolio tab** — track your actual trades with live P&L vs screener targets
+- **Daily email** — top picks, clickable news headlines, open portfolio P&L per owner, AI analysis
+- **Multi-portfolio support** — separate trade logs for multiple people (Raul, Sofia, etc.), each receiving their own email
+- **Portfolio tab** — track trades with live P&L, total invested vs current value, categories, per-owner view
 - **Performance tab** — screener accuracy history and AI analysis from each daily run
 
 ---
@@ -22,7 +24,7 @@ Live app: **https://projectsyr.streamlit.app/**
 ```
 Project_SYR/
 ├── app.py                         # Streamlit UI — 6 tabs
-├── daily_job.py                   # GitHub Actions scheduled runner
+├── daily_job.py                   # GitHub Actions scheduled runner + email
 ├── cli.py                         # Terminal runner (CSV output)
 ├── screener/
 │   ├── __init__.py                # Public API exports
@@ -41,6 +43,7 @@ Project_SYR/
 ├── pages/
 │   └── 1_📖_Metrics_Guide.py     # In-app explanation of every metric
 ├── .env                           # API keys — never commit
+├── trade_log.csv                  # CSV template for uploading trades
 ├── requirements.txt
 └── README.md
 ```
@@ -54,9 +57,9 @@ Project_SYR/
 | **📅 5-Day Trading** | Short-term swing setups, TP +5% / SL −3% |
 | **📆 30-Day Trading** | Medium-term positions, TP +12% / SL −6% |
 | **📈 180-Day Trading** | Long-term trend leaders, TP +25% / SL −12% |
-| **📰 News** | Last 3 days of headlines per stock, classified by Claude Haiku |
-| **💼 Portfolio** | Upload your trades (CSV or manual), live P&L from Yahoo Finance |
-| **📊 Performance** | Screener history, most-picked stocks, AI analysis from daily runs |
+| **📰 News** | Recent headlines per stock, classified by Claude Haiku. Adjustable window (3–14 days). News score blends into combined score on trading tabs. |
+| **💼 Portfolio** | Per-owner trade log. Upload CSV or add manually. Shows invested, current value, P&L $, category. Live prices from Yahoo Finance. |
+| **📊 Performance** | Screener history, signal win rates, AI analysis from daily runs |
 
 ---
 
@@ -137,6 +140,31 @@ Spread across 3–5 stocks per timeframe. Never concentrate in one pick.
 
 ---
 
+## Multi-portfolio setup
+
+Each person gets their own isolated trade log and a separate daily email with only their open positions. Screener picks and AI analysis are shared (they're market data).
+
+**To add a new portfolio (e.g. Sofia):**
+
+1. In the app Portfolio tab, select **＋ New portfolio…** and type `sofia`
+2. Add a GitHub Actions secret: `ALERT_EMAIL_SOFIA = sofia@email.com`
+3. Upload Sofia's trades via CSV or add them manually while "Sofia" is selected
+
+The daily email automatically sends one per owner based on `ALERT_EMAIL_<NAME>` secrets.
+
+---
+
+## Daily email
+
+Sent Mon-Fri after market close. Contains:
+- **Market regime** — Bull/Bear, VIX, breadth per timeframe
+- **Top 5 picks** per timeframe with tech score, news score, combined score, price → target, top signals
+- **📰 Key Headlines** — clickable GOOD/BAD article titles for today's top picks (neutral headlines excluded)
+- **💼 Open Positions** — per-owner: invested, current value, P&L $, status vs TP/SL, ⭐ still in picks flag
+- **AI Analysis** — Claude Sonnet's commentary on the day's picks and signal trends
+
+---
+
 ## One-time local setup
 
 ```bash
@@ -149,6 +177,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 FMP_API_KEY=...
 SUPABASE_URL=https://xxxx.supabase.co
 SUPABASE_KEY=eyJ...
+RESEND_API_KEY=re_...
 ```
 
 Run locally:
@@ -157,6 +186,7 @@ streamlit run app.py        # UI at http://localhost:8501
 python cli.py               # terminal, 5-day default
 python cli.py --days 30
 python cli.py --days 180
+python daily_job.py         # run the full daily pipeline locally
 ```
 
 ---
@@ -168,6 +198,7 @@ python cli.py --days 180
 | Streamlit Community Cloud | Hosts the web app | Free |
 | GitHub Actions | Runs daily screener Mon-Fri 4:30 PM ET | Free |
 | Supabase | PostgreSQL database (picks, trades, AI analysis) | Free |
+| Resend | Daily email delivery | Free (3,000/month) |
 | Anthropic API | News classification (Haiku) + daily analysis (Sonnet) | ~$1–2/month |
 
 ### Streamlit Cloud secrets
@@ -185,10 +216,28 @@ Set in Repo → Settings → Secrets → Actions:
 ANTHROPIC_API_KEY
 SUPABASE_URL
 SUPABASE_KEY
+RESEND_API_KEY
+ALERT_EMAIL              # your email (Raul)
+ALERT_EMAIL_SOFIA        # Sofia's email (add more as ALERT_EMAIL_<NAME>)
 ```
 
 ### Supabase setup
-Run the SQL schema from the docstring at the top of `screener/database.py` in the Supabase SQL Editor. Three tables: `screener_picks`, `trades`, `ai_analysis`. Leave RLS disabled (service_role key is used server-side by both GitHub Actions and Streamlit Cloud).
+Run once in the Supabase SQL Editor:
+```sql
+-- Full schema is in the docstring at the top of screener/database.py
+-- Minimum required:
+CREATE TABLE screener_picks (...);
+CREATE TABLE trades (...);
+CREATE TABLE ai_analysis (...);
+
+-- Additional columns added after initial setup:
+ALTER TABLE trades ADD COLUMN shares NUMERIC(12,4);
+ALTER TABLE trades ADD COLUMN total_invested NUMERIC(12,2);
+ALTER TABLE trades ADD COLUMN category TEXT;
+ALTER TABLE trades ADD COLUMN owner TEXT NOT NULL DEFAULT 'raul';
+```
+
+Leave RLS disabled — service_role key is used server-side.
 
 ---
 
@@ -203,6 +252,7 @@ Run the SQL schema from the docstring at the top of `screener/database.py` in th
 | News headlines | Yahoo Finance (yfinance .news) | — |
 | News sentiment | Claude Haiku | — |
 | Daily AI analysis | Claude Sonnet | — |
+| Email delivery | Resend | — |
 
 ---
 
@@ -212,7 +262,9 @@ Run the SQL schema from the docstring at the top of `screener/database.py` in th
 |---------|-----|
 | SPDR holdings warning | Expected on cloud — Wikipedia fallback activates automatically |
 | FMP earnings 403 | Expected on free plan — yfinance fallback activates automatically |
-| Breadth showing 0% | Fixed — ffill() applied before SMA50 comparison |
+| News scores always 0 | Widen the news window slider (try 7–14 days); check ANTHROPIC_API_KEY is set |
+| No email received | Check `RESEND_API_KEY` and `ALERT_EMAIL` are set in GitHub Actions secrets |
+| Portfolio tab shows wrong owner | Select the correct portfolio from the dropdown at the top of the tab |
 | Performance tab empty | GitHub Actions job hasn't run yet — trigger manually via Actions tab |
 | Supabase writes failing | Check service_role key is set (not anon key) and RLS is disabled |
 | App hangs >5 min | Yahoo Finance throttling — wait a few minutes and retry |
