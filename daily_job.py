@@ -390,8 +390,8 @@ def _build_portfolio_section(open_trades: list[dict], close_all, today_results) 
 
         # Status vs take profit / stop loss
         cfg = TIMEFRAMES.get(tf_key, {})
-        tp  = float(cfg.get("take_profit_pct", 5))
-        sl  = float(cfg.get("stop_loss_pct", 3))
+        tp  = float(cfg.get("take_profit_pct", 20))
+        sl  = float(cfg.get("stop_loss_pct", 10))
 
         if pnl_pct >= tp:
             status     = "✅ Hit target"
