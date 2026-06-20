@@ -439,45 +439,64 @@ def _build_portfolio_section(open_trades: list[dict], close_all, today_results) 
             status     = "🔵 Holding"
             status_col = "#9e9e9e"
 
-        still_liked = "⭐" if ticker in todays_picks else ""
-        pnl_color   = "#4caf50" if pnl_usd >= 0 else "#ef5350"
-        cat_badge   = f"<span style='color:#aaa;font-size:11px'>{category}</span><br>" if category else ""
+        still_liked = " ⭐" if ticker in todays_picks else ""
+        pnl_color   = "#00ffa3" if pnl_usd >= 0 else "#ff2d5b"
+        cat_badge   = f"<span style='color:#4a6a8a;font-size:10px;font-family:monospace'>{category}</span>" if category else ""
+
+        status_map = {
+            "✅": "#00ffa3", "🎯": "#7dff9a", "🔴": "#ff2d5b",
+            "⚠️": "#ffb800", "🟢": "#00ffa3", "🔵": "#4a6a8a",
+        }
+        status_col = next((v for k, v in status_map.items() if status.startswith(k)), "#4a6a8a")
 
         rows += f"""
-        <tr style="border-bottom:1px solid #2a2a2a">
-          <td style="padding:8px 12px;font-weight:700">{ticker} {still_liked}<br>{cat_badge}</td>
-          <td style="padding:8px 12px;color:#aaa;font-size:12px">{tf_key or '—'}</td>
-          <td style="padding:8px 12px">${invested:,.2f}</td>
-          <td style="padding:8px 12px">${current_val:,.2f}</td>
-          <td style="padding:8px 12px;color:{pnl_color};font-weight:700">{pnl_usd:+,.2f}<br>
-            <span style="font-size:11px;font-weight:400">{pnl_pct:+.2f}%</span></td>
-          <td style="padding:8px 12px;color:{status_col};font-size:13px">{status}</td>
+        <tr style="border-bottom:1px solid #0f2035">
+          <td style="padding:10px 14px">
+            <span style="font-weight:700;color:#ccd6f6;font-size:14px">{ticker}{still_liked}</span><br>
+            {cat_badge}
+          </td>
+          <td style="padding:10px 14px;color:#4a6a8a;font-size:12px;font-family:monospace">{tf_key or '—'}</td>
+          <td style="padding:10px 14px;font-family:monospace;color:#8899aa">${invested:,.2f}</td>
+          <td style="padding:10px 14px;font-family:monospace;color:#ccd6f6;font-weight:600">${current_val:,.2f}</td>
+          <td style="padding:10px 14px;font-family:monospace;font-weight:700;color:{pnl_color}">
+            {pnl_usd:+,.2f}<br>
+            <span style="font-size:11px;font-weight:400">{pnl_pct:+.2f}%</span>
+          </td>
+          <td style="padding:10px 14px;font-size:12px;color:{status_col}">{status}</td>
         </tr>"""
 
     if not rows:
         return ""
 
-    pnl_color = "#4caf50" if total_pnl >= 0 else "#ef5350"
-    summary_color = "#4caf50" if total_pnl >= 0 else "#ef5350"
+    summary_color = "#00ffa3" if total_pnl >= 0 else "#ff2d5b"
     return f"""
-    <h3 style="color:#00b4d8;margin:32px 0 4px">💼 Open Positions</h3>
-    <p style="margin:0 0 12px;font-size:13px;color:#ccc">
-      Invested: <strong>${total_invested:,.2f}</strong> &nbsp;|&nbsp;
-      Current value: <strong>${total_current:,.2f}</strong> &nbsp;|&nbsp;
-      P&amp;L: <strong style="color:{summary_color}">${total_pnl:+,.2f}</strong>
-    </p>
-    <table width="100%" cellpadding="0" cellspacing="0"
-           style="border-collapse:collapse;background:#1a1a1a;border-radius:6px">
-      <tr style="background:#111;color:#aaa;font-size:12px">
-        <th style="padding:6px 12px;text-align:left">Ticker</th>
-        <th style="padding:6px 12px;text-align:left">TF</th>
-        <th style="padding:6px 12px;text-align:left">Invested</th>
-        <th style="padding:6px 12px;text-align:left">Current Value</th>
-        <th style="padding:6px 12px;text-align:left">P&amp;L</th>
-        <th style="padding:6px 12px;text-align:left">Status</th>
-      </tr>
-      {rows}
-    </table>"""
+    <div style="margin:32px 0 0">
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px">
+        <span style="color:#00e5ff;font-size:16px;font-weight:700;letter-spacing:1px">💼 OPEN POSITIONS</span>
+      </div>
+      <div style="background:#080e1a;border:1px solid #1a3350;border-radius:8px;padding:12px 16px;margin-bottom:12px;font-family:monospace;font-size:13px">
+        <span style="color:#4a6a8a">INVESTED</span>
+        <span style="color:#ccd6f6;font-weight:600;margin:0 4px">${total_invested:,.2f}</span>
+        <span style="color:#1a3350;margin:0 8px">|</span>
+        <span style="color:#4a6a8a">VALUE</span>
+        <span style="color:#ccd6f6;font-weight:600;margin:0 4px">${total_current:,.2f}</span>
+        <span style="color:#1a3350;margin:0 8px">|</span>
+        <span style="color:#4a6a8a">P&amp;L</span>
+        <span style="color:{summary_color};font-weight:700;margin-left:4px">${total_pnl:+,.2f}</span>
+      </div>
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="border-collapse:collapse;background:#0c1420;border:1px solid #1a3350;border-radius:8px">
+        <tr style="background:#080e1a;border-bottom:1px solid #1a3350">
+          <th style="padding:8px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">TICKER</th>
+          <th style="padding:8px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">TF</th>
+          <th style="padding:8px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">INVESTED</th>
+          <th style="padding:8px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">VALUE</th>
+          <th style="padding:8px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">P&amp;L</th>
+          <th style="padding:8px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">STATUS</th>
+        </tr>
+        {rows}
+      </table>
+    </div>"""
 
 
 def _build_headlines_section(news_by_ticker: dict, today_results: dict) -> str:
@@ -497,32 +516,35 @@ def _build_headlines_section(news_by_ticker: dict, today_results: dict) -> str:
 
         items = ""
         for a in notable[:3]:
-            icon  = "🟢" if a["sentiment"] == "GOOD" else "🔴"
-            color = "#4caf50" if a["sentiment"] == "GOOD" else "#ef5350"
-            title = a.get("title", "")
-            link  = a.get("link", "")
-            reason = f" <span style='color:#aaa;font-size:11px'>— {a['reason']}</span>" if a.get("reason") else ""
-            pub   = a.get("published", "")
-            title_html = f'<a href="{link}" style="color:#e0e0e0;text-decoration:none">{title}</a>' if link else title
+            good    = a["sentiment"] == "GOOD"
+            badge   = f"<span style='background:{'#003d1f' if good else '#3d0012'};color:{'#00ffa3' if good else '#ff2d5b'};font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;font-family:monospace'>{'GOOD' if good else 'BAD'}</span>"
+            title   = a.get("title", "")
+            link    = a.get("link", "")
+            reason  = f"<br><span style='color:#4a6a8a;font-size:11px;padding-left:4px'>{a['reason']}</span>" if a.get("reason") else ""
+            pub     = a.get("published", "")
+            title_html = f'<a href="{link}" style="color:#ccd6f6;text-decoration:none">{title}</a>' if link else title
             items += f"""
-            <li style="margin:6px 0;line-height:1.4">
-              <span style="color:{color}">{icon}</span> {title_html}{reason}
-              <span style="color:#555;font-size:11px;margin-left:6px">{pub}</span>
-            </li>"""
+            <div style="margin:8px 0;padding:8px 10px;background:#070d18;border-left:2px solid {'#00ffa3' if good else '#ff2d5b'};border-radius:0 4px 4px 0">
+              {badge} <span style="font-size:12px">{title_html}</span>
+              <span style="color:#2a4a6a;font-size:10px;font-family:monospace;float:right">{pub}</span>
+              {reason}
+            </div>"""
 
         blocks += f"""
         <div style="margin-bottom:16px">
-          <strong style="color:#00b4d8">{ticker}</strong>
-          <ul style="margin:4px 0 0 0;padding-left:20px;list-style:none">{items}</ul>
+          <span style="color:#00e5ff;font-weight:700;font-size:13px;font-family:monospace">{ticker}</span>
+          {items}
         </div>"""
 
     if not blocks:
         return ""
 
     return f"""
-    <h3 style="color:#00b4d8;margin:32px 0 8px">📰 Key Headlines</h3>
-    <div style="background:#1a1a1a;border-radius:6px;padding:16px">
-      {blocks}
+    <div style="margin:32px 0 0">
+      <div style="color:#00e5ff;font-size:16px;font-weight:700;letter-spacing:1px;margin-bottom:12px">📰 KEY HEADLINES</div>
+      <div style="background:#0c1420;border:1px solid #1a3350;border-radius:8px;padding:16px">
+        {blocks}
+      </div>
     </div>"""
 
 
@@ -659,16 +681,17 @@ def _build_email_html(today_results, analysis, run_date, open_trades=None, close
         if df is None or df.empty:
             continue
 
-        regime = "BULL 🟢" if r["in_bull"] else "BEAR 🔴"
-        vix    = r["vix_val"]
-        brd    = r["breadth_pct"]
+        bull       = r["in_bull"]
+        regime_lbl = f"<span style='color:#00ffa3;font-weight:700'>● BULL</span>" if bull else f"<span style='color:#ff2d5b;font-weight:700'>● BEAR</span>"
+        vix        = r["vix_val"]
+        brd        = r["breadth_pct"]
 
         regime_rows += f"""
-        <tr>
-          <td style="padding:6px 12px;font-weight:600">{cfg['label']}</td>
-          <td style="padding:6px 12px">{regime}</td>
-          <td style="padding:6px 12px">VIX {vix:.1f}</td>
-          <td style="padding:6px 12px">Breadth {brd:.0f}%</td>
+        <tr style="border-bottom:1px solid #0f2035">
+          <td style="padding:9px 14px;font-family:monospace;color:#00e5ff;font-weight:700">{cfg['label']}</td>
+          <td style="padding:9px 14px">{regime_lbl}</td>
+          <td style="padding:9px 14px;font-family:monospace;color:#8899aa">VIX <span style="color:#ccd6f6">{vix:.1f}</span></td>
+          <td style="padding:9px 14px;font-family:monospace;color:#8899aa">BRD <span style="color:#ccd6f6">{brd:.0f}%</span></td>
         </tr>"""
 
         rows = ""
@@ -676,36 +699,38 @@ def _build_email_html(today_results, analysis, run_date, open_trades=None, close
             tech  = int(row.get("score", 0))
             news  = int(row.get("news_score", 0))
             combo = int(row.get("combined_score", tech))
-            news_tag = f" <span style='color:#4caf50'>+{news}</span>" if news > 0 \
-                  else f" <span style='color:#ef5350'>{news}</span>" if news < 0 else ""
-            sigs  = "  ·  ".join(row.get("signals", [])[:2])
-            earn  = " ⚠" if row.get("earnings_soon") else ""
+            news_col  = "#00ffa3" if news > 0 else "#ff2d5b" if news < 0 else "#4a6a8a"
+            news_tag  = f"<span style='color:{news_col};font-size:11px'> {news:+d}</span>" if news != 0 else ""
+            sigs      = " · ".join(row.get("signals", [])[:2])
+            earn      = "<span style='color:#ffb800'> ⚠</span>" if row.get("earnings_soon") else ""
+            score_col = "#00ffa3" if combo >= 80 else "#00e5ff" if combo >= 60 else "#8899aa"
             rows += f"""
-            <tr style="border-bottom:1px solid #2a2a2a">
-              <td style="padding:8px 12px;font-weight:700">{row['ticker']}{earn}</td>
-              <td style="padding:8px 12px">{tech}{news_tag}</td>
-              <td style="padding:8px 12px;font-weight:700;color:#00b4d8">{combo}</td>
-              <td style="padding:8px 12px">${row['price']:.2f} → ${row.get('expected_price', 0):.2f}</td>
-              <td style="padding:8px 12px;font-size:12px;color:#aaa">{sigs}</td>
+            <tr style="border-bottom:1px solid #0f2035">
+              <td style="padding:9px 14px;font-weight:700;color:#ccd6f6;font-family:monospace">{row['ticker']}{earn}</td>
+              <td style="padding:9px 14px;font-family:monospace;color:#8899aa">{tech}{news_tag}</td>
+              <td style="padding:9px 14px;font-family:monospace;font-weight:700;color:{score_col}">{combo}</td>
+              <td style="padding:9px 14px;font-family:monospace;color:#8899aa">${row['price']:.2f}<span style="color:#4a6a8a"> → </span><span style="color:#ccd6f6">${row.get('expected_price', 0):.2f}</span></td>
+              <td style="padding:9px 14px;font-size:11px;color:#4a6a8a">{sigs}</td>
             </tr>"""
 
         picks_sections += f"""
-        <h3 style="color:#00b4d8;margin:24px 0 8px">{cfg['label']}
-          <span style="font-weight:400;font-size:14px;color:#aaa">
-            — TP +{cfg['take_profit_pct']}% / SL −{cfg['stop_loss_pct']}%
-          </span>
-        </h3>
-        <table width="100%" cellpadding="0" cellspacing="0"
-               style="border-collapse:collapse;background:#1a1a1a;border-radius:6px">
-          <tr style="background:#111;color:#aaa;font-size:12px">
-            <th style="padding:6px 12px;text-align:left">Ticker</th>
-            <th style="padding:6px 12px;text-align:left">Tech / News</th>
-            <th style="padding:6px 12px;text-align:left">Combined</th>
-            <th style="padding:6px 12px;text-align:left">Price → Target</th>
-            <th style="padding:6px 12px;text-align:left">Top signals</th>
-          </tr>
-          {rows}
-        </table>"""
+        <div style="margin:28px 0 0">
+          <div style="margin-bottom:10px">
+            <span style="color:#00e5ff;font-size:15px;font-weight:700;letter-spacing:1px">{cfg['label']}</span>
+            <span style="color:#4a6a8a;font-size:12px;font-family:monospace;margin-left:10px">TP +{cfg['take_profit_pct']}% / SL -{cfg['stop_loss_pct']}%</span>
+          </div>
+          <table width="100%" cellpadding="0" cellspacing="0"
+                 style="border-collapse:collapse;background:#0c1420;border:1px solid #1a3350;border-radius:8px">
+            <tr style="background:#080e1a;border-bottom:1px solid #1a3350">
+              <th style="padding:7px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">TICKER</th>
+              <th style="padding:7px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">TECH/NEWS</th>
+              <th style="padding:7px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">SCORE</th>
+              <th style="padding:7px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">PRICE → TARGET</th>
+              <th style="padding:7px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">SIGNALS</th>
+            </tr>
+            {rows}
+          </table>
+        </div>"""
 
     analysis_html     = analysis.replace("\n", "<br>") if analysis else "No analysis generated."
     portfolio_section = _build_portfolio_section(open_trades or [], close_all, today_results) \
@@ -713,47 +738,65 @@ def _build_email_html(today_results, analysis, run_date, open_trades=None, close
     headlines_section = _build_headlines_section(news_by_ticker or {}, today_results)
     port_ai_html      = portfolio_analysis.replace("\n", "<br>") if portfolio_analysis else ""
     port_ai_section   = f"""
-    <h3 style="color:#00b4d8;margin:32px 0 8px">🤖 Portfolio Analysis</h3>
-    <div style="background:#1a1a1a;border-left:4px solid #f0c040;padding:16px;border-radius:4px;line-height:1.7">
-      {port_ai_html}
+    <div style="margin:32px 0 0">
+      <div style="color:#9f5cff;font-size:16px;font-weight:700;letter-spacing:1px;margin-bottom:12px">🤖 PORTFOLIO ANALYSIS</div>
+      <div style="background:#0c1420;border:1px solid #2a1a50;border-left:3px solid #9f5cff;border-radius:8px;padding:16px;line-height:1.8;color:#b8c8e0;font-size:13px">
+        {port_ai_html}
+      </div>
     </div>""" if port_ai_html else ""
 
-    return f"""
-    <!DOCTYPE html>
-    <html>
-    <body style="background:#0d0d0d;color:#e0e0e0;font-family:Arial,sans-serif;padding:24px;max-width:800px;margin:0 auto">
-      <h1 style="color:#00b4d8;margin-bottom:4px">R&S Stock Plan</h1>
-      <p style="color:#aaa;margin-top:0">{run_date} — Daily Screener Results</p>
+    return f"""<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#07090f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif">
+  <div style="max-width:680px;margin:0 auto;padding:24px 20px">
 
-      <table style="border-collapse:collapse;background:#1a1a1a;border-radius:6px;margin-bottom:24px" width="100%">
-        <tr style="background:#111;color:#aaa;font-size:12px">
-          <th style="padding:6px 12px;text-align:left">Timeframe</th>
-          <th style="padding:6px 12px;text-align:left">Regime</th>
-          <th style="padding:6px 12px;text-align:left">VIX</th>
-          <th style="padding:6px 12px;text-align:left">Breadth</th>
-        </tr>
-        {regime_rows}
-      </table>
+    <!-- HEADER -->
+    <div style="border-bottom:1px solid #1a3350;padding-bottom:16px;margin-bottom:24px">
+      <div style="font-family:monospace;font-size:22px;font-weight:700;letter-spacing:3px;color:#00e5ff">R&amp;S STOCK PLAN</div>
+      <div style="font-family:monospace;font-size:11px;color:#4a6a8a;margin-top:4px;letter-spacing:1px">
+        {run_date} // DAILY SCREENER // AFTER MARKET CLOSE
+      </div>
+    </div>
 
-      {portfolio_section}
+    <!-- REGIME -->
+    <div style="color:#00e5ff;font-size:12px;font-weight:700;letter-spacing:1px;margin-bottom:8px;font-family:monospace">MARKET REGIME</div>
+    <table width="100%" cellpadding="0" cellspacing="0"
+           style="border-collapse:collapse;background:#0c1420;border:1px solid #1a3350;border-radius:8px;margin-bottom:8px">
+      <tr style="background:#080e1a;border-bottom:1px solid #1a3350">
+        <th style="padding:7px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">TIMEFRAME</th>
+        <th style="padding:7px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">REGIME</th>
+        <th style="padding:7px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">VIX</th>
+        <th style="padding:7px 14px;text-align:left;color:#4a6a8a;font-size:10px;letter-spacing:1px;font-family:monospace">BREADTH</th>
+      </tr>
+      {regime_rows}
+    </table>
 
-      {port_ai_section}
+    {portfolio_section}
+    {port_ai_section}
 
-      {picks_sections}
+    <!-- PICKS -->
+    <div style="color:#00e5ff;font-size:12px;font-weight:700;letter-spacing:1px;margin:32px 0 4px;font-family:monospace">TODAY'S TOP PICKS</div>
+    {picks_sections}
 
-      {headlines_section}
+    {headlines_section}
 
-      <h3 style="color:#00b4d8;margin:32px 0 8px">AI Analysis</h3>
-      <div style="background:#1a1a1a;border-left:4px solid #00b4d8;padding:16px;border-radius:4px;line-height:1.7">
+    <!-- AI ANALYSIS -->
+    <div style="margin:32px 0 0">
+      <div style="color:#00e5ff;font-size:16px;font-weight:700;letter-spacing:1px;margin-bottom:12px">⚡ AI ANALYSIS</div>
+      <div style="background:#0c1420;border:1px solid #1a3350;border-left:3px solid #00e5ff;border-radius:8px;padding:16px;line-height:1.8;color:#b8c8e0;font-size:13px">
         {analysis_html}
       </div>
+    </div>
 
-      <p style="color:#555;font-size:12px;margin-top:32px">
-        This is an automated report from your R&S Stock Plan screener.<br>
-        View full results at <a href="https://projectsyr.streamlit.app" style="color:#00b4d8">projectsyr.streamlit.app</a>
-      </p>
-    </body>
-    </html>"""
+    <!-- FOOTER -->
+    <div style="margin-top:32px;padding-top:16px;border-top:1px solid #0f2035;font-family:monospace;font-size:11px;color:#2a4a6a">
+      AUTOMATED REPORT // R&amp;S STOCK PLAN //<br>
+      <a href="https://projectsyr.streamlit.app" style="color:#00e5ff;text-decoration:none">projectsyr.streamlit.app</a>
+    </div>
+
+  </div>
+</body>
+</html>"""
 
 
 
