@@ -472,9 +472,16 @@ def _fetch_live_prices(tickers: list[str]) -> dict[str, float]:
     if not tickers:
         return {}
     try:
-        raw = yf.download(tickers, period="2d", auto_adjust=True, progress=False)
-        closes = raw["Close"].ffill().iloc[-1]
-        return {str(t): float(closes[t]) for t in tickers if t in closes.index and not pd.isna(closes[t])}
+        raw    = yf.download(tickers, period="2d", auto_adjust=True, progress=False)
+        closes = raw["Close"].ffill()
+
+        # Single ticker: yfinance returns a Series (dates as index), not a DataFrame
+        if isinstance(closes, pd.Series):
+            val = closes.iloc[-1]
+            return {tickers[0]: float(val)} if not pd.isna(val) else {}
+
+        last = closes.iloc[-1]
+        return {str(t): float(last[t]) for t in tickers if t in last.index and not pd.isna(last[t])}
     except Exception:
         return {}
 
