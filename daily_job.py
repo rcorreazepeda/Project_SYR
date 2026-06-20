@@ -194,6 +194,129 @@ def run_ai_analysis(today_results, historical_picks, run_date):
 
 
 # ---------------------------------------------------------------------------
+# Email
+# ---------------------------------------------------------------------------
+
+def _build_email_html(today_results, analysis, run_date) -> str:
+    regime_rows = ""
+    picks_sections = ""
+
+    for tf_key in ["5d", "30d", "180d"]:
+        r   = today_results.get(tf_key, {})
+        df  = r.get("df")
+        cfg = TIMEFRAMES[tf_key]
+        if df is None or df.empty:
+            continue
+
+        regime = "BULL 🟢" if r["in_bull"] else "BEAR 🔴"
+        vix    = r["vix_val"]
+        brd    = r["breadth_pct"]
+
+        regime_rows += f"""
+        <tr>
+          <td style="padding:6px 12px;font-weight:600">{cfg['label']}</td>
+          <td style="padding:6px 12px">{regime}</td>
+          <td style="padding:6px 12px">VIX {vix:.1f}</td>
+          <td style="padding:6px 12px">Breadth {brd:.0f}%</td>
+        </tr>"""
+
+        rows = ""
+        for _, row in df.head(5).iterrows():
+            tech  = int(row.get("score", 0))
+            news  = int(row.get("news_score", 0))
+            combo = int(row.get("combined_score", tech))
+            news_tag = f" <span style='color:#4caf50'>+{news}</span>" if news > 0 \
+                  else f" <span style='color:#ef5350'>{news}</span>" if news < 0 else ""
+            sigs  = "  ·  ".join(row.get("signals", [])[:2])
+            earn  = " ⚠" if row.get("earnings_soon") else ""
+            rows += f"""
+            <tr style="border-bottom:1px solid #2a2a2a">
+              <td style="padding:8px 12px;font-weight:700">{row['ticker']}{earn}</td>
+              <td style="padding:8px 12px">{tech}{news_tag}</td>
+              <td style="padding:8px 12px;font-weight:700;color:#00b4d8">{combo}</td>
+              <td style="padding:8px 12px">${row['price']:.2f} → ${row.get('expected_price', 0):.2f}</td>
+              <td style="padding:8px 12px;font-size:12px;color:#aaa">{sigs}</td>
+            </tr>"""
+
+        picks_sections += f"""
+        <h3 style="color:#00b4d8;margin:24px 0 8px">{cfg['label']}
+          <span style="font-weight:400;font-size:14px;color:#aaa">
+            — TP +{cfg['take_profit_pct']}% / SL −{cfg['stop_loss_pct']}%
+          </span>
+        </h3>
+        <table width="100%" cellpadding="0" cellspacing="0"
+               style="border-collapse:collapse;background:#1a1a1a;border-radius:6px">
+          <tr style="background:#111;color:#aaa;font-size:12px">
+            <th style="padding:6px 12px;text-align:left">Ticker</th>
+            <th style="padding:6px 12px;text-align:left">Tech / News</th>
+            <th style="padding:6px 12px;text-align:left">Combined</th>
+            <th style="padding:6px 12px;text-align:left">Price → Target</th>
+            <th style="padding:6px 12px;text-align:left">Top signals</th>
+          </tr>
+          {rows}
+        </table>"""
+
+    analysis_html = analysis.replace("\n", "<br>") if analysis else "No analysis generated."
+
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <body style="background:#0d0d0d;color:#e0e0e0;font-family:Arial,sans-serif;padding:24px;max-width:800px;margin:0 auto">
+      <h1 style="color:#00b4d8;margin-bottom:4px">R&S Stock Plan</h1>
+      <p style="color:#aaa;margin-top:0">{run_date} — Daily Screener Results</p>
+
+      <table style="border-collapse:collapse;background:#1a1a1a;border-radius:6px;margin-bottom:24px" width="100%">
+        <tr style="background:#111;color:#aaa;font-size:12px">
+          <th style="padding:6px 12px;text-align:left">Timeframe</th>
+          <th style="padding:6px 12px;text-align:left">Regime</th>
+          <th style="padding:6px 12px;text-align:left">VIX</th>
+          <th style="padding:6px 12px;text-align:left">Breadth</th>
+        </tr>
+        {regime_rows}
+      </table>
+
+      {picks_sections}
+
+      <h3 style="color:#00b4d8;margin:32px 0 8px">AI Analysis</h3>
+      <div style="background:#1a1a1a;border-left:4px solid #00b4d8;padding:16px;border-radius:4px;line-height:1.7">
+        {analysis_html}
+      </div>
+
+      <p style="color:#555;font-size:12px;margin-top:32px">
+        This is an automated report from your R&S Stock Plan screener.<br>
+        View full results at <a href="https://projectsyr.streamlit.app" style="color:#00b4d8">projectsyr.streamlit.app</a>
+      </p>
+    </body>
+    </html>"""
+
+
+def send_email(today_results, analysis, run_date) -> None:
+    api_key = os.environ.get("RESEND_API_KEY", "")
+    to_email = os.environ.get("ALERT_EMAIL", "raulcorreazepeda@gmail.com")
+    if not api_key:
+        print("  [skip] RESEND_API_KEY not set — skipping email.")
+        return
+
+    try:
+        import resend
+        resend.api_key = api_key
+
+        top_5d  = ", ".join(today_results["5d"]["df"].head(3)["ticker"].tolist())
+        top_30d = ", ".join(today_results["30d"]["df"].head(3)["ticker"].tolist())
+        regime  = "BULL" if today_results["5d"]["in_bull"] else "BEAR"
+
+        resend.Emails.send({
+            "from":    "R&S Screener <screener@resend.dev>",
+            "to":      [to_email],
+            "subject": f"📈 Daily Picks {run_date} — {regime} — 5d: {top_5d} | 30d: {top_30d}",
+            "html":    _build_email_html(today_results, analysis, run_date),
+        })
+        print(f"  Email sent to {to_email}.")
+    except Exception as e:
+        print(f"  [warn] Email failed: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -313,6 +436,10 @@ def main():
         print(f"\n{TIMEFRAMES[tf_key]['label']} — top 5:\n{top5}")
     if analysis:
         print(f"\nAI ANALYSIS:\n{analysis[:800]}...")
+
+    # 6. Send email
+    send_email(today_results, analysis, run_date)
+
     print("\n=== Job complete ===")
 
 
