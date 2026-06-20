@@ -637,23 +637,23 @@ def send_email(today_results, analysis, run_date, trades_by_owner: dict | None =
         top_30d = ", ".join(today_results["30d"]["df"].head(3)["ticker"].tolist())
         regime  = "BULL" if today_results["5d"]["in_bull"] else "BEAR"
 
-        email_map     = _owner_email_map()
+        my_email        = os.environ.get("ALERT_EMAIL", "raulcorreazepeda@gmail.com")
         trades_by_owner = trades_by_owner or {}
 
-        for owner, to_email in email_map.items():
+        for owner in trades_by_owner:
             open_trades = trades_by_owner.get(owner, [])
             n_open      = len(open_trades)
             port_tag    = f" | {n_open} open" if n_open else ""
             resend.Emails.send({
                 "from":    "R&S Screener <screener@resend.dev>",
-                "to":      [to_email],
-                "subject": f"📈 Daily Picks {run_date} — {regime} — 5d: {top_5d} | 30d: {top_30d}{port_tag}",
+                "to":      [my_email],
+                "subject": f"📈 {owner.title()} — {run_date} — {regime} — 5d: {top_5d} | 30d: {top_30d}{port_tag}",
                 "html":    _build_email_html(
                     today_results, analysis, run_date,
                     open_trades, close_all, news_by_ticker,
                 ),
             })
-            print(f"  Email sent to {to_email} ({owner}).")
+            print(f"  Email sent to {my_email} ({owner}).")
     except Exception as e:
         print(f"  [warn] Email failed: {e}")
 
