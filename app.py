@@ -1020,6 +1020,232 @@ def render_performance_tab() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Investment advisor tab renderer
+# ---------------------------------------------------------------------------
+
+def render_advisor_tab() -> None:
+    st.markdown("""
+<div style="margin-bottom:20px">
+  <div style="font-family:monospace;font-size:16px;font-weight:700;letter-spacing:2px;color:#00e5ff">💡 INVESTMENT ADVISOR</div>
+  <div style="font-family:monospace;font-size:11px;color:#4a6a8a;margin-top:4px">
+    AI-powered allocation plan based on your portfolio, screener results, and news sentiment.
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    db = db_client()
+
+    # --- Inputs ---
+    c1, c2, c3 = st.columns(3)
+    amount  = c1.number_input("Amount to invest ($)", min_value=100.0, value=10000.0,
+                               step=500.0, format="%.0f")
+    horizon = c2.selectbox("Time horizon", ["6 months", "1 year"])
+    if db:
+        owners = get_all_owners(db)
+        owner  = c3.selectbox("Portfolio", owners, format_func=lambda x: x.title())
+    else:
+        owner = "raul"
+
+    run_plan = st.button("⚡ Generate Investment Plan", type="primary", use_container_width=False)
+
+    st.divider()
+
+    if run_plan:
+        # Map horizon → screener timeframe
+        tf_key = "180d"
+
+        # 1. Current open positions with live prices
+        open_positions: list[dict] = []
+        if db:
+            raw_trades = get_all_trades(db, owner=owner)
+            open_raw   = [t for t in raw_trades if t.get("outcome") in ("OPEN", None, "")]
+            if open_raw:
+                live_px = _fetch_live_prices([t["ticker"] for t in open_raw])
+                for t in open_raw:
+                    shares  = float(t.get("shares") or 0)
+                    entry   = float(t.get("entry_price") or 0)
+                    current = live_px.get(t["ticker"], entry)
+                    invested = shares * entry
+                    value    = shares * current
+                    pnl_pct  = (current - entry) / entry * 100 if entry else 0
+                    open_positions.append({
+                        "ticker":   t["ticker"],
+                        "category": t.get("category") or "—",
+                        "invested": invested,
+                        "value":    value,
+                        "pnl_pct": pnl_pct,
+                    })
+
+        # Category concentration
+        from collections import defaultdict
+        cat_totals: dict[str, float] = defaultdict(float)
+        total_pv = sum(p["value"] for p in open_positions)
+        for p in open_positions:
+            cat_totals[p["category"]] += p["value"]
+        cat_summary = (
+            "  ".join(
+                f"{k}: ${v:,.0f} ({v/total_pv*100:.0f}%)"
+                for k, v in sorted(cat_totals.items(), key=lambda x: -x[1])
+            )
+        ) if total_pv > 0 else "Empty portfolio"
+
+        portfolio_lines = "\n".join(
+            f"  - {p['ticker']} [{p['category']}]: invested ${p['invested']:,.0f}, "
+            f"now ${p['value']:,.0f} ({p['pnl_pct']:+.1f}%)"
+            for p in open_positions
+        ) or "  No open positions"
+
+        # 2. Screener picks (session state first, then Supabase fallback)
+        screener_picks: list[dict] = []
+        news_scores: dict = st.session_state.get("news_scores", {})
+        if f"df_{tf_key}" in st.session_state:
+            df_sc = st.session_state[f"df_{tf_key}"]
+            for _, row in df_sc.head(20).iterrows():
+                tech  = int(row.get("score", 0))
+                news  = news_scores.get(row["ticker"], int(row.get("news_score", 0)))
+                screener_picks.append({
+                    "ticker":   row["ticker"],
+                    "tech":     tech,
+                    "news":     news,
+                    "combined": tech + news,
+                    "signals":  row.get("signals", [])[:3],
+                    "exp_ret":  float(row.get("expected_return_%", 0)),
+                    "price":    float(row.get("price", 0)),
+                })
+        elif db:
+            recent_picks = get_recent_picks(db, days=5)
+            for p in recent_picks:
+                if p.get("timeframe") == tf_key:
+                    screener_picks.append({
+                        "ticker":   p["ticker"],
+                        "tech":     p.get("technical_score", 0),
+                        "news":     p.get("news_score", 0),
+                        "combined": p.get("combined_score", 0),
+                        "signals":  [s.strip() for s in (p.get("signals") or "").split("·")][:3],
+                        "exp_ret":  float(p.get("expected_return_pct") or 0),
+                        "price":    float(p.get("entry_price") or 0),
+                    })
+        screener_picks.sort(key=lambda x: -x["combined"])
+
+        picks_lines = "\n".join(
+            f"  - {p['ticker']}: score={p['combined']} (tech={p['tech']}, news={p['news']}), "
+            f"price=${p['price']:.2f}, exp.return={p['exp_ret']:+.1f}%, "
+            f"signals: {' | '.join(str(s) for s in p['signals'] if s)}"
+            for p in screener_picks[:15]
+        ) or "  No screener data — run the screener first, then come back."
+
+        # 3. Historical win rate
+        win_rate_txt = "Not enough data yet"
+        if db:
+            resolved = get_picks_with_outcomes(db, days=90)
+            if resolved:
+                wins  = sum(1 for p in resolved if p.get("outcome") == "WIN")
+                total = len(resolved)
+                tf_resolved = [p for p in resolved if p.get("timeframe") == tf_key]
+                tf_wins     = sum(1 for p in tf_resolved if p.get("outcome") == "WIN")
+                win_rate_txt = (
+                    f"Overall {wins}/{total} ({wins/total*100:.0f}%)  |  "
+                    f"{tf_key} timeframe: {tf_wins}/{len(tf_resolved)} "
+                    f"({tf_wins/len(tf_resolved)*100:.0f}%)" if tf_resolved else
+                    f"Overall {wins}/{total} ({wins/total*100:.0f}%)"
+                )
+
+        # 4. Latest AI analysis snippet
+        ai_snippet = ""
+        if db:
+            ai = get_latest_ai_analysis(db)
+            if ai:
+                ai_snippet = (ai.get("analysis_text") or "")[:600]
+
+        existing_tickers = [p["ticker"] for p in open_positions]
+
+        prompt = f"""You are a personal investment advisor helping {owner.title()} decide how to invest ${amount:,.0f} over {horizon}.
+
+CURRENT PORTFOLIO — {owner.title()} (open positions):
+{portfolio_lines}
+
+Category concentration: {cat_summary}
+Total portfolio value: ${total_pv:,.2f}
+Existing tickers: {', '.join(existing_tickers) or 'none'}
+
+TOP SCREENER PICKS (180-day momentum, ranked by combined score):
+{picks_lines}
+
+SCREENER HISTORICAL WIN RATE (last 90 days): {win_rate_txt}
+
+LATEST AI SCREENER INSIGHT:
+{ai_snippet or 'Not available'}
+
+INSTRUCTIONS:
+1. Recommend 3–5 specific tickers from the screener picks list above
+2. Avoid tickers already in {owner.title()}'s portfolio unless adding more is clearly justified (DCA)
+3. Avoid over-concentrating in categories already heavily represented
+4. Allocate ${amount:,.0f} across the picks — amounts must sum exactly to ${amount:,.0f}
+5. Prioritize highest combined scores and positive news
+6. Be specific and actionable — no vague advice
+
+RESPOND IN THIS EXACT FORMAT (markdown):
+
+## 💡 INVESTMENT PLAN — {owner.title().upper()} — ${amount:,.0f} / {horizon.upper()}
+
+### RECOMMENDED ALLOCATIONS
+| Ticker | $ Amount | % Deploy | Rationale |
+|--------|----------|----------|-----------|
+| TICKER | $X,XXX | XX% | one-line reason |
+
+### KEY REASONING
+[One paragraph per pick: why this ticker, what signals support it, how it fits {owner.title()}'s portfolio]
+
+### PORTFOLIO FIT
+[How these picks change the category concentration — what improves, what risk remains]
+
+### RISKS TO WATCH
+- Risk 1
+- Risk 2
+- Risk 3"""
+
+        key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not key:
+            st.error("ANTHROPIC_API_KEY not set.")
+            return
+
+        import anthropic as _ant
+        with st.spinner(f"Analyzing {owner.title()}'s portfolio and generating ${amount:,.0f} investment plan…"):
+            _client = _ant.Anthropic(api_key=key)
+            response = _client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1800,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        plan = response.content[0].text
+
+        st.session_state["advisor_plan"]   = plan
+        st.session_state["advisor_params"] = {"amount": amount, "horizon": horizon, "owner": owner}
+
+    # Display plan (persists across reruns)
+    if "advisor_plan" in st.session_state:
+        params = st.session_state.get("advisor_params", {})
+        if not run_plan:
+            st.caption(
+                f"Plan for {params.get('owner','').title()} — "
+                f"${params.get('amount',0):,.0f} / {params.get('horizon','')} — "
+                "click ⚡ Generate to refresh"
+            )
+        st.markdown(st.session_state["advisor_plan"])
+
+        if st.button("🗑 Clear plan", key="clear_plan_btn"):
+            del st.session_state["advisor_plan"]
+            st.rerun()
+    elif not run_plan:
+        st.markdown("""
+<div style="background:#0c1420;border:1px dashed #1a3350;border-radius:8px;padding:24px;text-align:center;color:#4a6a8a;font-family:monospace">
+  Set your amount and horizon above, then click ⚡ Generate Investment Plan.<br><br>
+  <span style="font-size:11px">Tip: run the screener + fetch news first for the most accurate recommendations.</span>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
 
@@ -1077,9 +1303,9 @@ if "raw_data" not in st.session_state:
         st.session_state["raw_data"] = raw
         st.session_state["tickers"]  = tickers
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📅 5-Day Trading", "📆 30-Day Trading", "📈 180-Day Trading",
-    "📰 News", "💼 Portfolio", "📊 Performance",
+    "📰 News", "💼 Portfolio", "📊 Performance", "💡 Advisor",
 ])
 
 _screener_ready = "raw_data" in st.session_state
@@ -1110,3 +1336,6 @@ with tab5:
 
 with tab6:
     render_performance_tab()
+
+with tab7:
+    render_advisor_tab()
