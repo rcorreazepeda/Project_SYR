@@ -2,7 +2,6 @@ DOWNLOAD_LOOKBACK = "3y"  # covers all three timeframes including 1-year RS look
 
 TIMEFRAMES = {
     "30d": {
-    "30d": {
         "label": "30-Day",
         "description": "Medium-term position — hold ~1 calendar month",
         "min_data_days": 150,
