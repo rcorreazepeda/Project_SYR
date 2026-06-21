@@ -654,9 +654,38 @@ def render_portfolio_tab() -> None:
 
     with col_manual:
         with st.expander(f"Add trade to {owner.title()}'s portfolio"):
+
+            # DCA preview — live lookup outside the form so it updates as user types
+            preview_ticker = _normalize_ticker(
+                st.text_input("Ticker (check for existing position)", key=f"dca_preview_ticker_{owner}",
+                              placeholder="e.g. AAPL, BTC-USD")
+            )
+            if preview_ticker and db:
+                existing_preview = get_open_trade(db, preview_ticker, owner)
+                if existing_preview:
+                    ep_shares = float(existing_preview.get("shares") or 0)
+                    ep_price  = float(existing_preview.get("entry_price") or 0)
+                    ep_inv    = ep_shares * ep_price
+                    st.markdown(
+                        f"""<div style="background:#001f30;border:1px solid #00e5ff;border-left:3px solid #00e5ff;
+                        border-radius:6px;padding:10px 14px;margin:6px 0;font-family:monospace;font-size:12px">
+                        <span style="color:#00e5ff">⚡ DCA DETECTED — existing open position</span><br>
+                        <span style="color:#ccd6f6">{preview_ticker}</span>
+                        &nbsp;·&nbsp; <span style="color:#8899aa">{ep_shares:.8g} shares</span>
+                        &nbsp;·&nbsp; <span style="color:#8899aa">avg ${ep_price:.6f}</span>
+                        &nbsp;·&nbsp; <span style="color:#8899aa">invested ${ep_inv:,.2f}</span><br>
+                        <span style="color:#4a6a8a;font-size:11px">
+                        Adding shares below will recalculate the weighted average cost automatically.</span>
+                        </div>""",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.caption(f"No open position for {preview_ticker} — will be saved as a new trade.")
+
+            st.markdown("---")
             with st.form(f"add_trade_{owner}"):
                 t1, t2 = st.columns(2)
-                ticker     = _normalize_ticker(t1.text_input("Ticker"))
+                ticker     = _normalize_ticker(t1.text_input("Ticker", value=preview_ticker))
                 tf         = t2.selectbox("Timeframe", ["5d", "30d", "180d", "— (no screener)"])
                 d_entered  = t1.date_input("Date entered", value=datetime.today())
                 entry_px   = t2.number_input("Entry price $", min_value=0.000001, format="%.6f")
@@ -683,12 +712,13 @@ def render_portfolio_tab() -> None:
                             new_shares = float(shares)
                             new_price  = float(entry_px)
                             if old_shares > 0 and old_price > 0:
-                                total   = old_shares + new_shares
-                                avg_px  = (old_shares * old_price + new_shares * new_price) / total
+                                total  = old_shares + new_shares
+                                avg_px = (old_shares * old_price + new_shares * new_price) / total
                                 dca_trade(db, int(existing["id"]), new_shares, new_price, old_shares, old_price)
                                 st.success(
-                                    f"Added {new_shares} shares to {ticker}. "
-                                    f"New total: {total:.8g} shares @ ${avg_px:.6f} avg cost."
+                                    f"✅ DCA complete — {ticker}\n\n"
+                                    f"Old: {old_shares:.8g} shares @ ${old_price:.6f}  →  "
+                                    f"New: {total:.8g} shares @ ${avg_px:.6f} avg cost"
                                 )
                                 st.rerun()
                             else:

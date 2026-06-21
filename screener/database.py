@@ -230,12 +230,13 @@ def dca_trade(client: "Client", trade_id: int, added_shares: float,
 
 
 def get_open_trade(client: "Client", ticker: str, owner: str) -> Optional[dict]:
+    # Match outcome = 'OPEN' OR NULL (CSV imports often leave outcome empty)
     resp = (
         client.table("trades")
         .select("*")
         .eq("ticker", ticker)
         .eq("owner", owner)
-        .eq("outcome", "OPEN")
+        .or_("outcome.eq.OPEN,outcome.is.null")
         .limit(1)
         .execute()
     )
