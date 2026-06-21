@@ -55,7 +55,7 @@ with col1:
 **Every weekday at 4:30 PM ET** — after market close — GitHub Actions runs automatically:
 
 1. Downloads fresh price data for all 500+ S&P 500 stocks
-2. Scores each stock across 5d / 30d / 180d timeframes
+2. Scores each stock across 30d / 180d / 1y timeframes
 3. Saves the top 20 picks per timeframe to the database
 4. Fetches and classifies recent news headlines with AI
 5. Runs Claude AI analysis on the day's results
@@ -114,7 +114,7 @@ st.divider()
 # ── TABS ──────────────────────────────────────────────────────────────────────
 st.markdown("## 📱 Tab-by-Tab Guide")
 
-with st.expander("📅 5-Day / 📆 30-Day / 📈 180-Day Trading  —  The Screener"):
+with st.expander("📅 30-Day / 📆 180-Day / 📈 1-Year Trading  —  The Screener"):
     st.markdown("""
 These three tabs show the same thing at different holding horizons.
 
@@ -135,9 +135,9 @@ These three tabs show the same thing at different holding horizons.
 **Timeframe guide:**
 | Tab | Hold for | Take profit | Stop loss |
 |-----|----------|-------------|-----------|
-| 5-Day | ~1 week | +5% | −3% |
 | 30-Day | ~1 month | +12% | −6% |
 | 180-Day | ~6 months | +25% | −12% |
+| 1-Year | ~1 year | +40% | −15% |
 """)
 
 with st.expander("📰 News  —  AI Sentiment Classification"):

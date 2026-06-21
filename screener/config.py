@@ -1,57 +1,7 @@
-DOWNLOAD_LOOKBACK = "2y"  # covers all three timeframes from one download
+DOWNLOAD_LOOKBACK = "3y"  # covers all three timeframes including 1-year RS lookback
 
 TIMEFRAMES = {
-    "5d": {
-        "label": "5-Day",
-        "description": "Short-term swing — enter Monday, exit Friday",
-        "min_data_days": 80,
-        # RSI zones
-        "rsi_recover": (30, 50),
-        "rsi_bullish": (50, 65),
-        # Stochastic
-        "stoch_oversold": 20,
-        "stoch_caution": 30,
-        # Moving averages
-        "sma_fast": 20,
-        "sma_slow": 50,
-        # Bollinger
-        "bb_period": 20,
-        # Volume
-        "vol_recent": 5,
-        "vol_avg": 20,
-        # OBV comparison window
-        "obv_window": 10,
-        # Momentum
-        "mom_days": 6,
-        "mom_atr_range": (0.3, 2.5),
-        # Relative strength lookback (trading days)
-        "rs_days": 21,
-        # Golden cross scan (None = disabled)
-        "golden_cross_lookback": None,
-        # Score weights
-        "score_rsi_recover": 25,
-        "score_stoch_cross": 20,
-        "score_macd_cross": 25,
-        "score_macd_positive": 10,
-        "score_sma_aligned": 20,
-        "score_bb_below": 15,
-        "score_bb_near": 10,
-        "score_obv_divergence": 20,
-        "score_obv_rising": 10,
-        "score_vol_surge": 15,
-        "score_vol_above": 7,
-        "score_momentum": 10,
-        "score_rs_leader": 15,
-        "score_rs_outperform": 7,
-        "score_golden_cross": 0,
-        # Forecast
-        "forecast_atr_days": 5,
-        "atr_score_div": 80,
-        # Exit rules
-        "take_profit_pct": 5.0,
-        "stop_loss_pct": 3.0,
-        "hold_days": 5,
-    },
+    "30d": {
     "30d": {
         "label": "30-Day",
         "description": "Medium-term position — hold ~1 calendar month",
@@ -129,5 +79,44 @@ TIMEFRAMES = {
         "take_profit_pct": 25.0,
         "stop_loss_pct": 12.0,
         "hold_days": 180,
+    },
+    "1y": {
+        "label": "1-Year",
+        "description": "Long-term trend — hold ~1 full trading year",
+        "min_data_days": 400,
+        "rsi_recover": (50, 70),
+        "rsi_bullish": (65, 80),
+        "stoch_oversold": 40,
+        "stoch_caution": 55,
+        "sma_fast": 50,
+        "sma_slow": 200,
+        "bb_period": 50,
+        "vol_recent": 20,
+        "vol_avg": 100,
+        "obv_window": 60,
+        "mom_days": 126,
+        "mom_atr_range": (2.0, 15.0),
+        "rs_days": 252,
+        "golden_cross_lookback": 60,
+        "score_rsi_recover": 10,
+        "score_stoch_cross": 8,
+        "score_macd_cross": 8,
+        "score_macd_positive": 25,
+        "score_sma_aligned": 35,
+        "score_bb_below": 8,
+        "score_bb_near": 5,
+        "score_obv_divergence": 12,
+        "score_obv_rising": 10,
+        "score_vol_surge": 8,
+        "score_vol_above": 5,
+        "score_momentum": 8,
+        "score_rs_leader": 30,
+        "score_rs_outperform": 15,
+        "score_golden_cross": 25,
+        "forecast_atr_days": 252,
+        "atr_score_div": 30,
+        "take_profit_pct": 40.0,
+        "stop_loss_pct": 15.0,
+        "hold_days": 252,
     },
 }

@@ -441,14 +441,14 @@ def render_news_tab() -> None:
     st.subheader("News Sentiment — Last 3 Days")
     st.caption("Fetches recent headlines via Yahoo Finance and classifies each one with Claude Haiku.")
 
-    has_data = any(f"df_{tf}" in st.session_state for tf in ["5d", "30d", "180d"])
+    has_data = any(f"df_{tf}" in st.session_state for tf in ["1y", "30d", "180d"])
     if not has_data:
         st.info("Run the screener first to see news for your top picks.")
         return
 
     available = {
         TIMEFRAMES[tf]["label"]: tf
-        for tf in ["5d", "30d", "180d"]
+        for tf in ["1y", "30d", "180d"]
         if f"df_{tf}" in st.session_state
     }
     selected_label = st.selectbox("Timeframe", list(available.keys()), key="news_tf_select")
@@ -687,7 +687,7 @@ def render_portfolio_tab() -> None:
             with st.form(f"add_trade_{owner}"):
                 t1, t2 = st.columns(2)
                 ticker     = _normalize_ticker(t1.text_input("Ticker", value=preview_ticker))
-                tf         = t2.selectbox("Timeframe", ["5d", "30d", "180d", "— (no screener)"])
+                tf         = t2.selectbox("Timeframe", ["1y", "30d", "180d", "— (no screener)"])
                 d_entered  = t1.date_input("Date entered", value=datetime.today())
                 entry_px   = t2.number_input("Entry price $", min_value=0.000001, format="%.6f")
                 shares     = t1.number_input("Shares bought", min_value=0.0, format="%.8f")
@@ -965,7 +965,7 @@ def render_performance_tab() -> None:
         st.subheader(f"AI Analysis — {latest['run_date']}")
         st.markdown(latest["analysis_text"])
         st.caption(
-            f"Top 5d: {latest.get('top_picks_5d', '—')}  |  "
+            f"Top 1y: {latest.get('top_picks_1y', '—')}  |  "
             f"30d: {latest.get('top_picks_30d', '—')}  |  "
             f"180d: {latest.get('top_picks_180d', '—')}"
         )
@@ -1052,7 +1052,7 @@ def render_performance_tab() -> None:
         # Outcomes by timeframe
         st.subheader("Win Rate by Timeframe")
         tf_cols = st.columns(3)
-        for col, tf in zip(tf_cols, ["5d", "30d", "180d"]):
+        for col, tf in zip(tf_cols, ["1y", "30d", "180d"]):
             sub = res_df[res_df["timeframe"] == tf]
             if not sub.empty:
                 w = (sub["outcome"] == "WIN").sum()
@@ -1080,7 +1080,7 @@ def render_performance_tab() -> None:
     # Score distributions per timeframe
     st.subheader("Avg Combined Score by Timeframe")
     c1, c2, c3 = st.columns(3)
-    for col, tf in zip([c1, c2, c3], ["5d", "30d", "180d"]):
+    for col, tf in zip([c1, c2, c3], ["1y", "30d", "180d"]):
         sub = picks_df[picks_df["timeframe"] == tf]["combined_score"]
         if not sub.empty:
             col.metric(f"{tf}", f"{sub.mean():.0f} avg", f"max {sub.max()}")
@@ -1369,11 +1369,11 @@ st.markdown('<p style="font-family:monospace;font-size:11px;color:#4a6a8a;margin
 
 if run_btn:
     # Clear cached results so all tabs re-score with fresh settings
-    for key in ["df_5d", "df_30d", "df_180d",
-                "bull_5d", "bull_30d", "bull_180d",
-                "spy_5d",  "spy_30d",  "spy_180d",
-                "vix_5d",  "vix_30d",  "vix_180d",
-                "breadth_5d", "breadth_30d", "breadth_180d",
+    for key in ["df_1y", "df_30d", "df_180d",
+                "bull_1y", "bull_30d", "bull_180d",
+                "spy_1y",  "spy_30d",  "spy_180d",
+                "vix_1y",  "vix_30d",  "vix_180d",
+                "breadth_1y", "breadth_30d", "breadth_180d",
                 "tickers", "raw_data", "sector_map"]:
         st.session_state.pop(key, None)
     st.session_state["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -1396,7 +1396,7 @@ if "raw_data" not in st.session_state:
         st.session_state["tickers"]  = tickers
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "📅 5-Day Trading", "📆 30-Day Trading", "📈 180-Day Trading",
+    "📅 1-Year Trading", "📆 30-Day Trading", "📈 180-Day Trading",
     "📰 News", "💼 Portfolio", "📊 Performance", "💡 Advisor",
 ])
 
@@ -1404,7 +1404,7 @@ _screener_ready = "raw_data" in st.session_state
 
 with tab1:
     if _screener_ready:
-        render_tab("5d", st.session_state["raw_data"], st.session_state["tickers"], top_n, min_score, tax_rate)
+        render_tab("1y", st.session_state["raw_data"], st.session_state["tickers"], top_n, min_score, tax_rate)
     else:
         st.info("👈 Click **Run Screener** in the sidebar to start. ~2–3 min first run, cached after that.")
 

@@ -3,7 +3,7 @@
 
 What it does on each run:
   1. Downloads all S&P 500 price data
-  2. Scores every stock for 5d / 30d / 180d timeframes
+  2. Scores every stock for 30d / 180d / 1y timeframes
   3. Fetches + classifies news for top 20 picks
   4. Blends news score with technical score → combined score
   5. Saves today's results to Supabase (screener_picks table)
@@ -141,7 +141,7 @@ def check_outcomes(db, close_all: "pd.DataFrame") -> dict[str, list[dict]]:
     today = date.today()
     summary: dict[str, list[dict]] = {}
 
-    for tf_key in ["5d", "30d", "180d"]:
+    for tf_key in ["1y", "30d", "180d"]:
         cfg       = TIMEFRAMES[tf_key]
         hold_days = cfg["hold_days"]
         tp        = cfg["take_profit_pct"] / 100
@@ -238,7 +238,7 @@ def _build_ai_prompt(today_results, recent_outcomes, signal_win_rates, run_date)
         "## TODAY'S TOP PICKS",
     ]
 
-    for tf_key in ["5d", "30d", "180d"]:
+    for tf_key in ["1y", "30d", "180d"]:
         r   = today_results.get(tf_key, {})
         df  = r.get("df")
         cfg = TIMEFRAMES[tf_key]
@@ -319,7 +319,7 @@ def _build_ai_prompt(today_results, recent_outcomes, signal_win_rates, run_date)
         "",
         "**4. Scoring adjustment** — ONE specific, data-backed suggestion:",
         "   Format: 'Adjust [signal] weight for [timeframe] from [X] to [Y] because [evidence]'",
-        "   Example: 'Increase score_macd_cross for 5d from 25 to 30 — MACD fresh cross",
+        "   Example: 'Increase score_macd_cross for 30d from 25 to 30 — MACD fresh cross",
         "   has 71% win rate (22/31), highest of all signals, consistently beating target.'",
         "   Only suggest if win-rate data supports it. Skip if data is thin.",
         "",
@@ -361,7 +361,7 @@ def _build_portfolio_section(open_trades: list[dict], close_all, today_results) 
     # All tickers in today's top 20 across any timeframe
     todays_picks = {
         t
-        for tf in ["5d", "30d", "180d"]
+        for tf in ["1y", "30d", "180d"]
         for t in today_results.get(tf, {}).get("df", pd.DataFrame()).head(20).get("ticker", pd.Series()).tolist()
     }
 
@@ -503,7 +503,7 @@ def _build_headlines_section(news_by_ticker: dict, today_results: dict) -> str:
     """Return an HTML block with GOOD/BAD headlines for today's top picks."""
     top_tickers = list({
         t
-        for tf in ["5d", "30d", "180d"]
+        for tf in ["1y", "30d", "180d"]
         for t in today_results.get(tf, {}).get("df", pd.DataFrame()).head(5).get("ticker", pd.Series()).tolist()
     })
 
@@ -674,7 +674,7 @@ def _build_email_html(today_results, analysis, run_date, open_trades=None, close
     regime_rows = ""
     picks_sections = ""
 
-    for tf_key in ["5d", "30d", "180d"]:
+    for tf_key in ["1y", "30d", "180d"]:
         r   = today_results.get(tf_key, {})
         df  = r.get("df")
         cfg = TIMEFRAMES[tf_key]
@@ -811,9 +811,9 @@ def send_email(today_results, analysis, run_date, trades_by_owner: dict | None =
         import resend
         resend.api_key = api_key
 
-        top_5d  = ", ".join(today_results["5d"]["df"].head(3)["ticker"].tolist())
+        top_1y  = ", ".join(today_results["1y"]["df"].head(3)["ticker"].tolist())
         top_30d = ", ".join(today_results["30d"]["df"].head(3)["ticker"].tolist())
-        regime  = "BULL" if today_results["5d"]["in_bull"] else "BEAR"
+        regime  = "BULL" if today_results["1y"]["in_bull"] else "BEAR"
 
         my_email        = os.environ.get("ALERT_EMAIL", "raulcorreazepeda@gmail.com")
         trades_by_owner = trades_by_owner or {}
@@ -827,7 +827,7 @@ def send_email(today_results, analysis, run_date, trades_by_owner: dict | None =
             resend.Emails.send({
                 "from":    "R&S Screener <screener@resend.dev>",
                 "to":      [my_email],
-                "subject": f"📈 {owner.title()} — {run_date} — {regime} — 5d: {top_5d} | 30d: {top_30d}{port_tag}",
+                "subject": f"📈 {owner.title()} — {run_date} — {regime} — 1y: {top_1y} | 30d: {top_30d}{port_tag}",
                 "html":    _build_email_html(
                     today_results, analysis, run_date,
                     open_trades, close_all, news_by_ticker, port_analysis,
@@ -877,7 +877,7 @@ def main():
     # 2. Score all timeframes
     print("[4/6] Scoring stocks...")
     today_results = {}
-    for tf_key in ["5d", "30d", "180d"]:
+    for tf_key in ["1y", "30d", "180d"]:
         print(f"  {tf_key}...", end=" ", flush=True)
         df, in_bull, spy_ret, vix_val, breadth_pct = _run_timeframe(tf_key, data, tickers, sector_map)
         today_results[tf_key] = {
@@ -892,7 +892,7 @@ def main():
     # 3. News enrichment for top 20 unique tickers
     all_top = list({
         t
-        for tf_key in ["5d", "30d", "180d"]
+        for tf_key in ["1y", "30d", "180d"]
         for t in today_results[tf_key]["df"].head(20)["ticker"].tolist()
     })
     print(f"[5/6] Fetching news for {len(all_top)} tickers...")
@@ -913,7 +913,7 @@ def main():
             print(f"  {ticker}: {label}")
 
     # Apply news scores
-    for tf_key in ["5d", "30d", "180d"]:
+    for tf_key in ["1y", "30d", "180d"]:
         df = today_results[tf_key]["df"].copy()
         df["news_score"]    = df["ticker"].map(lambda t: news_scores.get(t, 0))
         df["combined_score"] = df["score"] + df["news_score"]
@@ -953,7 +953,7 @@ def main():
     if analysis and db:
         top_picks = {
             tf: ", ".join(today_results[tf]["df"].head(5)["ticker"].tolist())
-            for tf in ["5d", "30d", "180d"]
+            for tf in ["1y", "30d", "180d"]
         }
         save_ai_analysis(db, run_date, analysis, top_picks)
         print("  AI analysis saved.")
@@ -962,7 +962,7 @@ def main():
     print("\n" + "="*60)
     print("SUMMARY")
     print("="*60)
-    for tf_key in ["5d", "30d", "180d"]:
+    for tf_key in ["1y", "30d", "180d"]:
         df = today_results[tf_key]["df"]
         top5 = df.head(5)[["ticker", "score", "news_score", "combined_score"]].to_string(index=False)
         print(f"\n{TIMEFRAMES[tf_key]['label']} — top 5:\n{top5}")

@@ -2,9 +2,10 @@
 CLI runner — prints ranked results for a chosen timeframe.
 
 Usage:
-    python cli.py            # defaults to 5-day
+    python cli.py             # defaults to 30-day
     python cli.py --days 30
     python cli.py --days 180
+    python cli.py --days 365
 """
 
 import sys
@@ -27,13 +28,13 @@ from screener import (
 
 TOP_N = 10
 
-TF_MAP = {"5": "5d", "30": "30d", "180": "180d"}
+TF_MAP = {"30": "30d", "180": "180d", "365": "1y"}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="S&P 500 screener CLI")
-    parser.add_argument("--days", choices=["5", "30", "180"], default="5",
-                        help="Holding horizon in trading days (default: 5)")
+    parser.add_argument("--days", choices=["30", "180", "365"], default="30",
+                        help="Holding horizon in trading days (default: 30)")
     args = parser.parse_args()
 
     tf_key = TF_MAP[args.days]
