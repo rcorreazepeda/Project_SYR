@@ -1268,12 +1268,8 @@ with st.sidebar:
 # Main
 # ---------------------------------------------------------------------------
 
-st.markdown("""
-<div style="border-bottom:1px solid #1a3350;padding-bottom:14px;margin-bottom:8px;width:100%;box-sizing:border-box">
-  <div style="font-family:monospace;font-size:22px;font-weight:700;letter-spacing:2px;color:#00e5ff;white-space:nowrap">R&amp;S STOCK PLAN</div>
-  <div style="font-family:monospace;font-size:11px;color:#4a6a8a;margin-top:4px;letter-spacing:0.5px">S&amp;P 500 // MULTI-TIMEFRAME SCREENER // STATISTICAL SETUP QUALITY</div>
-</div>
-""", unsafe_allow_html=True)
+st.title("R&S STOCK PLAN")
+st.markdown('<p style="font-family:monospace;font-size:11px;color:#4a6a8a;margin-top:-12px;letter-spacing:0.5px">S&P 500 // MULTI-TIMEFRAME SCREENER // STATISTICAL SETUP QUALITY</p>', unsafe_allow_html=True)
 
 if run_btn:
     # Clear cached results so all tabs re-score with fresh settings
