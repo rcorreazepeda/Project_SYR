@@ -54,9 +54,11 @@ Schema (run once in Supabase SQL editor):
         created_at    TIMESTAMPTZ DEFAULT NOW()
     );
 """
+from __future__ import annotations
+
 import os
 from datetime import date
-from typing import Optional
+from typing import Optional, Dict
 
 try:
     from supabase import create_client, Client
@@ -143,7 +145,7 @@ def get_recent_picks(client: "Client", days: int = 30):
     return resp.data or []
 
 
-def get_ticker_consistency(client: "Client", timeframe: str = "180d", days: int = 30) -> dict[str, dict]:
+def get_ticker_consistency(client: "Client", timeframe: str = "180d", days: int = 30) -> Dict[str, dict]:
     """Return how consistently each ticker appeared in top-20 picks over the last N screener runs.
 
     Result: {ticker: {"days": N, "total": M, "pct": int}}
