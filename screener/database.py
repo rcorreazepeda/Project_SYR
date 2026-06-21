@@ -219,6 +219,56 @@ def close_trade(client: "Client", trade_id: int, exit_price: float,
     }).eq("id", trade_id).execute()
 
 
+def partial_close_trade(
+    client: "Client",
+    trade: dict,
+    sold_shares: float,
+    exit_price: float,
+    exit_date: str,
+) -> None:
+    """Sell some shares of an open position.
+
+    Reduces the open trade's share count and inserts a closed record for the sold portion.
+    If all shares are sold, the open trade is fully closed instead.
+    """
+    entry_price    = float(trade["entry_price"])
+    current_shares = float(trade["shares"] or 0)
+    remaining      = round(current_shares - sold_shares, 8)
+    actual_return  = round((exit_price - entry_price) / entry_price * 100, 4)
+    outcome        = "WIN" if actual_return > 0 else "LOSS"
+
+    if remaining <= 0:
+        # Sell everything — just close the original trade
+        client.table("trades").update({
+            "exit_price":        round(exit_price, 6),
+            "exit_date":         exit_date,
+            "actual_return_pct": actual_return,
+            "outcome":           outcome,
+        }).eq("id", trade["id"]).execute()
+    else:
+        # Reduce the open trade's share count
+        client.table("trades").update({
+            "shares": remaining,
+        }).eq("id", trade["id"]).execute()
+
+        # Insert a closed record for the sold portion
+        client.table("trades").insert({
+            "date_entered":      trade["date_entered"],
+            "ticker":            trade["ticker"],
+            "owner":             trade.get("owner", "raul"),
+            "category":          trade.get("category"),
+            "timeframe":         trade.get("timeframe"),
+            "shares":            round(sold_shares, 8),
+            "entry_price":       entry_price,
+            "exit_price":        round(exit_price, 6),
+            "exit_date":         exit_date,
+            "actual_return_pct": actual_return,
+            "held_days":         trade.get("held_days"),
+            "outcome":           outcome,
+            "notes":             f"Partial sell ({sold_shares:.8g}/{current_shares:.8g} shares)",
+        }).execute()
+
+
 def dca_trade(client: "Client", trade_id: int, added_shares: float,
               added_price: float, old_shares: float, old_price: float) -> None:
     total_shares = old_shares + added_shares

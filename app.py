@@ -42,6 +42,7 @@ from screener.database import (
     get_picks_with_outcomes,
     get_ticker_consistency,
     close_trade,
+    partial_close_trade,
     dca_trade,
     get_open_trade,
 )
@@ -808,24 +809,66 @@ def render_portfolio_tab() -> None:
             (open_df["current_price"] - open_df["entry_price"]) / open_df["entry_price"] * 100
         ).round(2)
 
-        # --- Close a position ---
-        with st.expander("🔴 Close a position"):
+        # --- Close / partial sell ---
+        with st.expander("🔴 Close or partial sell"):
             open_tickers = open_df["ticker"].tolist()
-            close_ticker = st.selectbox("Select position to close", open_tickers, key="close_ticker_sel")
+            close_ticker = st.selectbox("Select position", open_tickers, key="close_ticker_sel")
             if close_ticker:
-                pos = open_df[open_df["ticker"] == close_ticker].iloc[0]
-                auto_px   = live_px.get(close_ticker, 0.0)
-                exit_px   = st.number_input("Exit price $", value=float(auto_px), format="%.6f", key="close_exit_px")
+                pos        = open_df[open_df["ticker"] == close_ticker].iloc[0]
+                tot_shares = float(pos["shares"] or 0)
+                entry_val  = float(pos["entry_price"] or 0)
+                auto_px    = live_px.get(close_ticker, 0.0)
+
+                sell_type = st.radio("Sell type", ["Full close", "Partial sell"],
+                                     horizontal=True, key="sell_type_radio")
+                exit_px   = st.number_input("Exit price $", value=float(auto_px),
+                                            format="%.6f", key="close_exit_px")
                 exit_date = st.date_input("Exit date", value=datetime.today(), key="close_exit_date")
-                if entry_val := float(pos["entry_price"]):
-                    ret_pct = (exit_px - entry_val) / entry_val * 100
-                    color   = "green" if ret_pct >= 0 else "red"
-                    st.markdown(f"Return: :{color}[**{ret_pct:+.2f}%**]")
-                if st.button("Confirm close", type="primary", key="close_confirm_btn"):
-                    trade_id = int(pos["id"])
-                    close_trade(db, trade_id, exit_px, str(exit_date), ret_pct)
-                    st.success(f"Closed {close_ticker} at ${exit_px:.2f} ({ret_pct:+.2f}%)")
-                    st.rerun()
+
+                if sell_type == "Partial sell":
+                    sold_shares = st.number_input(
+                        f"Shares to sell (max {tot_shares:.8g})",
+                        min_value=0.0, max_value=float(tot_shares),
+                        value=min(1.0, float(tot_shares)),
+                        format="%.8f", key="partial_shares",
+                    )
+                else:
+                    sold_shares = tot_shares
+
+                # Preview
+                if entry_val and exit_px and sold_shares > 0:
+                    ret_pct     = (exit_px - entry_val) / entry_val * 100
+                    proceeds    = sold_shares * exit_px
+                    pnl         = sold_shares * (exit_px - entry_val)
+                    remaining   = tot_shares - sold_shares
+                    ret_color   = "#00ffa3" if ret_pct >= 0 else "#ff2d5b"
+                    label       = "Full close" if remaining <= 0 else f"Remaining: {remaining:.8g} shares @ ${entry_val:.6f}"
+                    st.markdown(
+                        f"""<div style="background:#0c1420;border:1px solid #1a3350;border-radius:8px;
+                        padding:12px 16px;font-family:monospace;font-size:12px;margin:8px 0">
+                        <span style="color:#4a6a8a">SELLING</span>
+                        &nbsp;<span style="color:#ccd6f6">{sold_shares:.8g} shares of {close_ticker}</span>
+                        &nbsp;·&nbsp;<span style="color:#4a6a8a">proceeds</span>
+                        &nbsp;<span style="color:#ccd6f6">${proceeds:,.2f}</span>
+                        &nbsp;·&nbsp;<span style="color:#4a6a8a">P&L</span>
+                        &nbsp;<span style="color:{ret_color}">{pnl:+,.2f} ({ret_pct:+.2f}%)</span><br>
+                        <span style="color:#4a6a8a">{label}</span>
+                        </div>""",
+                        unsafe_allow_html=True,
+                    )
+
+                    btn_label = "Confirm full close" if remaining <= 0 else f"Confirm partial sell ({sold_shares:.8g} shares)"
+                    if st.button(btn_label, type="primary", key="close_confirm_btn"):
+                        if sell_type == "Full close" or remaining <= 0:
+                            close_trade(db, int(pos["id"]), exit_px, str(exit_date), ret_pct)
+                            st.success(f"Closed {close_ticker} — {tot_shares:.8g} shares @ ${exit_px:.6f} ({ret_pct:+.2f}%)")
+                        else:
+                            partial_close_trade(db, pos.to_dict(), sold_shares, exit_px, str(exit_date))
+                            st.success(
+                                f"Partial sell — {sold_shares:.8g} shares of {close_ticker} @ ${exit_px:.6f} "
+                                f"({ret_pct:+.2f}%)  ·  {remaining:.8g} shares remain"
+                            )
+                        st.rerun()
 
         st.subheader("Open Positions")
         open_df["category"] = open_df.get("category", pd.Series(dtype=str))
