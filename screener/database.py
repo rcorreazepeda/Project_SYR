@@ -143,6 +143,33 @@ def get_recent_picks(client: "Client", days: int = 30):
     return resp.data or []
 
 
+def get_ticker_consistency(client: "Client", timeframe: str = "180d", days: int = 30) -> dict[str, dict]:
+    """Return how consistently each ticker appeared in top-20 picks over the last N screener runs.
+
+    Result: {ticker: {"days": N, "total": M, "pct": int}}
+    A ticker with pct=90 appeared in 9 out of 10 recent runs — much more reliable than a one-day spike.
+    """
+    from datetime import timedelta
+    from collections import Counter
+    since = str(date.today() - timedelta(days=days))
+    resp = (
+        client.table("screener_picks")
+        .select("run_date,ticker")
+        .eq("timeframe", timeframe)
+        .gte("run_date", since)
+        .execute()
+    )
+    rows = resp.data or []
+    if not rows:
+        return {}
+    total_days = len({r["run_date"] for r in rows})
+    counts = Counter(r["ticker"] for r in rows)
+    return {
+        ticker: {"days": cnt, "total": total_days, "pct": round(cnt / total_days * 100)}
+        for ticker, cnt in counts.items()
+    }
+
+
 def get_latest_ai_analysis(client: "Client") -> Optional[dict]:
     resp = (
         client.table("ai_analysis")

@@ -40,6 +40,7 @@ from screener.database import (
     get_recent_picks,
     get_latest_ai_analysis,
     get_picks_with_outcomes,
+    get_ticker_consistency,
     close_trade,
     dca_trade,
     get_open_trade,
@@ -1095,7 +1096,12 @@ def render_advisor_tab() -> None:
             for p in open_positions
         ) or "  No open positions"
 
-        # 2. Screener picks (session state first, then Supabase fallback)
+        # 2. Consistency scores — how many of the last 30 screener runs included each ticker
+        consistency: dict[str, dict] = {}
+        if db:
+            consistency = get_ticker_consistency(db, timeframe=tf_key, days=30)
+
+        # 3. Screener picks (session state first, then Supabase fallback)
         screener_picks: list[dict] = []
         news_scores: dict = st.session_state.get("news_scores", {})
         if f"df_{tf_key}" in st.session_state:
@@ -1103,11 +1109,14 @@ def render_advisor_tab() -> None:
             for _, row in df_sc.head(20).iterrows():
                 tech  = int(row.get("score", 0))
                 news  = news_scores.get(row["ticker"], int(row.get("news_score", 0)))
+                cons  = consistency.get(row["ticker"], {})
                 screener_picks.append({
                     "ticker":   row["ticker"],
                     "tech":     tech,
                     "news":     news,
                     "combined": tech + news,
+                    "cons_pct": cons.get("pct", 0),
+                    "cons_days": f"{cons.get('days',0)}/{cons.get('total',0)}",
                     "signals":  row.get("signals", [])[:3],
                     "exp_ret":  float(row.get("expected_return_%", 0)),
                     "price":    float(row.get("price", 0)),
@@ -1116,19 +1125,32 @@ def render_advisor_tab() -> None:
             recent_picks = get_recent_picks(db, days=5)
             for p in recent_picks:
                 if p.get("timeframe") == tf_key:
+                    cons = consistency.get(p["ticker"], {})
                     screener_picks.append({
-                        "ticker":   p["ticker"],
-                        "tech":     p.get("technical_score", 0),
-                        "news":     p.get("news_score", 0),
-                        "combined": p.get("combined_score", 0),
-                        "signals":  [s.strip() for s in (p.get("signals") or "").split("·")][:3],
-                        "exp_ret":  float(p.get("expected_return_pct") or 0),
-                        "price":    float(p.get("entry_price") or 0),
+                        "ticker":    p["ticker"],
+                        "tech":      p.get("technical_score", 0),
+                        "news":      p.get("news_score", 0),
+                        "combined":  p.get("combined_score", 0),
+                        "cons_pct":  cons.get("pct", 0),
+                        "cons_days": f"{cons.get('days',0)}/{cons.get('total',0)}",
+                        "signals":   [s.strip() for s in (p.get("signals") or "").split("·")][:3],
+                        "exp_ret":   float(p.get("expected_return_pct") or 0),
+                        "price":     float(p.get("entry_price") or 0),
                     })
-        screener_picks.sort(key=lambda x: -x["combined"])
 
+        # Rank by blended score: 60% today's combined score + 40% 30-day consistency
+        # Normalise combined to 0-100 range before blending
+        max_combined = max((p["combined"] for p in screener_picks), default=1) or 1
+        for p in screener_picks:
+            p["blended"] = round(
+                (p["combined"] / max_combined * 100) * 0.6 + p["cons_pct"] * 0.4
+            )
+        screener_picks.sort(key=lambda x: -x["blended"])
+
+        has_consistency = any(p["cons_pct"] > 0 for p in screener_picks)
+        cons_note = "(last 30 days of screener runs)" if has_consistency else "(no history yet — run screener daily to build consistency data)"
         picks_lines = "\n".join(
-            f"  - {p['ticker']}: score={p['combined']} (tech={p['tech']}, news={p['news']}), "
+            f"  - {p['ticker']}: blended={p['blended']} (score={p['combined']}, consistency={p['cons_pct']}% {p['cons_days']} days), "
             f"price=${p['price']:.2f}, exp.return={p['exp_ret']:+.1f}%, "
             f"signals: {' | '.join(str(s) for s in p['signals'] if s)}"
             for p in screener_picks[:15]
@@ -1168,7 +1190,8 @@ Category concentration: {cat_summary}
 Total portfolio value: ${total_pv:,.2f}
 Existing tickers: {', '.join(existing_tickers) or 'none'}
 
-TOP SCREENER PICKS (180-day momentum, ranked by combined score):
+TOP SCREENER PICKS (180-day momentum, ranked by blended score) {cons_note}:
+Each pick shows: blended score (60% today's score + 40% 30-day consistency), consistency % = how many of the last 30 screener runs included this ticker (high % = sustained signal, not a one-day spike).
 {picks_lines}
 
 SCREENER HISTORICAL WIN RATE (last 90 days): {win_rate_txt}
@@ -1178,10 +1201,10 @@ LATEST AI SCREENER INSIGHT:
 
 INSTRUCTIONS:
 1. Recommend 3–5 specific tickers from the screener picks list above
-2. Avoid tickers already in {owner.title()}'s portfolio unless adding more is clearly justified (DCA)
-3. Avoid over-concentrating in categories already heavily represented
-4. Allocate ${amount:,.0f} across the picks — amounts must sum exactly to ${amount:,.0f}
-5. Prioritize highest combined scores and positive news
+2. Strongly prefer tickers with high consistency % (≥60%) — they signal sustained momentum, not noise
+3. Avoid tickers already in {owner.title()}'s portfolio unless DCA is clearly justified
+4. Avoid over-concentrating in categories already heavily represented
+5. Allocate ${amount:,.0f} across the picks — amounts must sum exactly to ${amount:,.0f}
 6. Be specific and actionable — no vague advice
 
 RESPOND IN THIS EXACT FORMAT (markdown):
@@ -1189,9 +1212,9 @@ RESPOND IN THIS EXACT FORMAT (markdown):
 ## 💡 INVESTMENT PLAN — {owner.title().upper()} — ${amount:,.0f} / {horizon.upper()}
 
 ### RECOMMENDED ALLOCATIONS
-| Ticker | $ Amount | % Deploy | Rationale |
-|--------|----------|----------|-----------|
-| TICKER | $X,XXX | XX% | one-line reason |
+| Ticker | $ Amount | % Deploy | Consistency | Rationale |
+|--------|----------|----------|-------------|-----------|
+| TICKER | $X,XXX | XX% | XX% (X/X days) | one-line reason |
 
 ### KEY REASONING
 [One paragraph per pick: why this ticker, what signals support it, how it fits {owner.title()}'s portfolio]
