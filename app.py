@@ -61,7 +61,7 @@ st.markdown("""
   /* === GLOBAL === */
   .stApp, [data-testid="stAppViewContainer"] { background-color: #07090f !important; }
   [data-testid="stHeader"] { background: #07090f !important; }
-  .block-container { padding-top: 1.5rem; max-width: 1200px; }
+  .block-container { padding-top: 1.5rem; }
   body, p, span, div, label { color: #ccd6f6; }
 
   /* === SIDEBAR === */
@@ -1269,9 +1269,9 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 
 st.markdown("""
-<div style="border-bottom:1px solid #1a3350;padding-bottom:14px;margin-bottom:8px">
-  <div style="font-family:monospace;font-size:24px;font-weight:700;letter-spacing:3px;color:#00e5ff">R&amp;S STOCK PLAN</div>
-  <div style="font-family:monospace;font-size:11px;color:#4a6a8a;margin-top:4px;letter-spacing:1px">S&amp;P 500 MULTI-TIMEFRAME MOMENTUM SCREENER // STATISTICAL SETUP QUALITY</div>
+<div style="border-bottom:1px solid #1a3350;padding-bottom:14px;margin-bottom:8px;width:100%;box-sizing:border-box">
+  <div style="font-family:monospace;font-size:22px;font-weight:700;letter-spacing:2px;color:#00e5ff;white-space:nowrap">R&amp;S STOCK PLAN</div>
+  <div style="font-family:monospace;font-size:11px;color:#4a6a8a;margin-top:4px;letter-spacing:0.5px">S&amp;P 500 // MULTI-TIMEFRAME SCREENER // STATISTICAL SETUP QUALITY</div>
 </div>
 """, unsafe_allow_html=True)
 
