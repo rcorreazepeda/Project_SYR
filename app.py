@@ -58,8 +58,69 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    [data-testid="stMetricValue"] { font-size: 1.6rem; font-weight: 700; }
-    .block-container { padding-top: 2rem; }
+  /* === GLOBAL === */
+  .stApp, [data-testid="stAppViewContainer"] { background-color: #07090f !important; }
+  [data-testid="stHeader"] { background: #07090f !important; }
+  .block-container { padding-top: 1.5rem; max-width: 1200px; }
+  body, p, span, div, label { color: #ccd6f6; }
+
+  /* === SIDEBAR === */
+  [data-testid="stSidebar"] { background: #080e1a !important; border-right: 1px solid #1a3350; }
+  [data-testid="stSidebar"] h1 { color: #00e5ff !important; font-family: monospace !important; letter-spacing: 2px; }
+  [data-testid="stSidebar"] .stCaption, [data-testid="stSidebar"] small { color: #4a6a8a !important; }
+  [data-testid="stSidebarUserContent"] hr { border-color: #1a3350 !important; }
+
+  /* === HEADERS === */
+  h1 { color: #00e5ff !important; font-family: monospace !important; letter-spacing: 2px; font-size: 1.6rem !important; }
+  h2, h3 { color: #00e5ff !important; font-family: monospace !important; letter-spacing: 1px; }
+  hr { border-color: #1a3350 !important; margin: 1rem 0; }
+
+  /* === METRICS === */
+  [data-testid="stMetricValue"] { color: #00e5ff !important; font-family: monospace !important; font-size: 1.5rem !important; font-weight: 700 !important; }
+  [data-testid="stMetricLabel"] { color: #4a6a8a !important; font-family: monospace !important; font-size: 0.72rem !important; letter-spacing: 0.06em !important; text-transform: uppercase; }
+  [data-testid="stMetricDelta"] { font-family: monospace !important; font-size: 0.78rem !important; }
+  [data-testid="metric-container"] { background: #0c1420 !important; border: 1px solid #1a3350 !important; border-radius: 8px !important; padding: 12px 16px !important; }
+
+  /* === BUTTONS === */
+  .stButton > button { border-radius: 6px !important; font-family: monospace !important; letter-spacing: 0.08em !important; font-weight: 700 !important; transition: all 0.15s ease; }
+  .stButton > button[kind="primary"] { background: transparent !important; border: 1px solid #00e5ff !important; color: #00e5ff !important; }
+  .stButton > button[kind="primary"]:hover { background: rgba(0,229,255,0.12) !important; box-shadow: 0 0 12px rgba(0,229,255,0.3); }
+  .stButton > button[kind="secondary"] { background: transparent !important; border: 1px solid #1a3350 !important; color: #4a6a8a !important; }
+  .stButton > button[kind="secondary"]:hover { border-color: #00e5ff !important; color: #00e5ff !important; }
+
+  /* === TABS === */
+  [data-testid="stTabs"] button[role="tab"] { background: transparent !important; color: #4a6a8a !important; font-family: monospace !important; letter-spacing: 0.5px !important; border-bottom: 2px solid transparent !important; }
+  [data-testid="stTabs"] button[role="tab"][aria-selected="true"] { color: #00e5ff !important; border-bottom: 2px solid #00e5ff !important; }
+  [data-testid="stTabs"] button[role="tab"]:hover { color: #ccd6f6 !important; }
+  [data-testid="stTabsContent"] { border-top: 1px solid #1a3350; }
+
+  /* === EXPANDERS === */
+  [data-testid="stExpander"] { border: 1px solid #1a3350 !important; border-radius: 8px !important; background: #0c1420 !important; }
+  [data-testid="stExpander"] summary { color: #ccd6f6 !important; font-family: monospace !important; }
+  [data-testid="stExpander"] details { background: #080e1a !important; }
+
+  /* === INPUTS & SELECTS === */
+  [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input, textarea { background: #0c1420 !important; border: 1px solid #1a3350 !important; color: #ccd6f6 !important; font-family: monospace !important; border-radius: 6px !important; }
+  [data-testid="stSelectbox"] > div > div { background: #0c1420 !important; border: 1px solid #1a3350 !important; color: #ccd6f6 !important; }
+  [data-testid="stDateInput"] input { background: #0c1420 !important; border: 1px solid #1a3350 !important; color: #ccd6f6 !important; font-family: monospace !important; }
+  [data-testid="stSlider"] [data-testid="stTickBar"] { color: #4a6a8a; }
+  [data-testid="stForm"] { background: #080e1a !important; border: 1px solid #1a3350 !important; border-radius: 8px !important; padding: 16px !important; }
+
+  /* === DATAFRAME === */
+  [data-testid="stDataFrameResizable"] { border: 1px solid #1a3350 !important; border-radius: 8px !important; overflow: hidden; }
+  [data-testid="stDataFrame"] { background: #0c1420 !important; }
+
+  /* === CAPTIONS === */
+  [data-testid="stCaptionContainer"], .stCaption { color: #4a6a8a !important; font-family: monospace !important; font-size: 0.76rem !important; }
+
+  /* === ALERTS === */
+  [data-testid="stAlert"] { border-radius: 8px !important; border-left-width: 3px !important; }
+
+  /* === FILE UPLOADER === */
+  [data-testid="stFileUploader"] { background: #0c1420 !important; border: 1px dashed #1a3350 !important; border-radius: 8px !important; }
+
+  /* === PROGRESS === */
+  [data-testid="stProgressBar"] > div { background: #00e5ff !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -325,32 +386,35 @@ def render_tab(tf_key: str, data: dict, tickers: list[str],
         fig.add_trace(go.Scatter(
             x=list(close.index) + list(close.index[::-1]),
             y=list(bb_up) + list(bb_lo[::-1]),
-            fill="toself", fillcolor="rgba(100,149,237,0.10)",
+            fill="toself", fillcolor="rgba(0,229,255,0.05)",
             line=dict(width=0), name=f"BB{cfg['bb_period']}", hoverinfo="skip",
         ), row=1, col=1)
         fig.add_trace(go.Scatter(x=close.index, y=close,
-                                 line=dict(color="#00b4d8", width=2), name="Close"), row=1, col=1)
+                                 line=dict(color="#00e5ff", width=2), name="Close"), row=1, col=1)
         fig.add_trace(go.Scatter(x=sma_f.index, y=sma_f,
-                                 line=dict(color="#f77f00", width=1.5, dash="dot"),
+                                 line=dict(color="#ffc800", width=1.5, dash="dot"),
                                  name=f"SMA{sf}"), row=1, col=1)
         fig.add_trace(go.Scatter(x=sma_s.index, y=sma_s,
-                                 line=dict(color="#e63946", width=1.5, dash="dot"),
+                                 line=dict(color="#ff2d5b", width=1.5, dash="dot"),
                                  name=f"SMA{ss}"), row=1, col=1)
 
-        bar_colors = ["#26a69a" if c >= o else "#ef5350"
+        bar_colors = ["#00ffa3" if c >= o else "#ff2d5b"
                       for c, o in zip(close, close.shift(1).fillna(close))]
         vol_avg = volume.rolling(cfg["vol_avg"]).mean()
         fig.add_trace(go.Bar(x=volume.index, y=volume, marker_color=bar_colors,
-                             name="Volume", opacity=0.7), row=2, col=1)
+                             name="Volume", opacity=0.6), row=2, col=1)
         fig.add_trace(go.Scatter(x=vol_avg.index, y=vol_avg,
-                                 line=dict(color="#ffd166", width=1.5),
+                                 line=dict(color="#ffc800", width=1.5),
                                  name=f"Vol avg ({cfg['vol_avg']}d)"), row=2, col=1)
 
         fig.update_layout(
             height=520,
-            title=dict(text=f"{chart_ticker} — {cfg['label']} view", x=0.01),
+            title=dict(text=f"{chart_ticker} — {cfg['label']} view", x=0.01,
+                       font=dict(family="monospace", color="#00e5ff", size=14)),
             template="plotly_dark",
-            legend=dict(orientation="h", y=1.06, x=0),
+            paper_bgcolor="#07090f",
+            plot_bgcolor="#080e1a",
+            legend=dict(orientation="h", y=1.06, x=0, font=dict(family="monospace", size=11)),
             margin=dict(l=0, r=0, t=50, b=0),
             hovermode="x unified",
             xaxis_rangeslider_visible=False,
@@ -365,9 +429,9 @@ def render_tab(tf_key: str, data: dict, tickers: list[str],
 # ---------------------------------------------------------------------------
 
 SENTIMENT_STYLE = {
-    "GOOD":    ("🟢", "#1a3a1a", "#4caf50"),
-    "BAD":     ("🔴", "#3a1a1a", "#ef5350"),
-    "NEUTRAL": ("⚪", "#2a2a2a", "#9e9e9e"),
+    "GOOD":    ("●", "#001f14", "#00ffa3"),
+    "BAD":     ("●", "#1a0010", "#ff2d5b"),
+    "NEUTRAL": ("●", "#0c1420", "#4a6a8a"),
 }
 
 
@@ -453,12 +517,14 @@ def render_news_tab() -> None:
                 icon, bg, border = SENTIMENT_STYLE.get(article["sentiment"], SENTIMENT_STYLE["NEUTRAL"])
                 reason = f" — {article['reason']}" if article["reason"] else ""
                 st.markdown(
-                    f"""<div style="background:{bg}; border-left:4px solid {border};
-                    padding:8px 12px; margin:4px 0; border-radius:4px;">
-                    {icon} <strong>{article['title']}</strong>{reason}<br>
-                    <small style="color:#aaa;">{article['publisher']} · {article['published']}
+                    f"""<div style="background:{bg};border:1px solid {border}22;border-left:3px solid {border};
+                    padding:10px 14px;margin:5px 0;border-radius:6px;">
+                    <span style="color:{border};font-size:10px">{icon}</span>
+                    <strong style="color:#ccd6f6;font-size:13px">{article['title']}</strong>
+                    <span style="color:{border};font-size:11px">{reason}</span><br>
+                    <span style="color:#4a6a8a;font-size:11px;font-family:monospace">{article['publisher']} · {article['published']}
                     &nbsp;·&nbsp; <a href="{article['link']}" target="_blank"
-                    style="color:#aaa;">Read →</a></small></div>""",
+                    style="color:#4a6a8a;text-decoration:none">Read →</a></span></div>""",
                     unsafe_allow_html=True,
                 )
 
@@ -976,8 +1042,12 @@ with st.sidebar:
 # Main
 # ---------------------------------------------------------------------------
 
-st.title("R&S Stock Plan")
-st.caption("Ranks every S&P 500 stock by statistical setup quality across three holding horizons.")
+st.markdown("""
+<div style="border-bottom:1px solid #1a3350;padding-bottom:14px;margin-bottom:8px">
+  <div style="font-family:monospace;font-size:24px;font-weight:700;letter-spacing:3px;color:#00e5ff">R&amp;S STOCK PLAN</div>
+  <div style="font-family:monospace;font-size:11px;color:#4a6a8a;margin-top:4px;letter-spacing:1px">S&amp;P 500 MULTI-TIMEFRAME MOMENTUM SCREENER // STATISTICAL SETUP QUALITY</div>
+</div>
+""", unsafe_allow_html=True)
 
 if run_btn:
     # Clear cached results so all tabs re-score with fresh settings
