@@ -47,7 +47,7 @@ Schema (run once in Supabase SQL editor):
         id            BIGSERIAL PRIMARY KEY,
         run_date      DATE        NOT NULL,
         analysis_text TEXT        NOT NULL,
-        top_picks_5d  TEXT,
+        top_picks_1y  TEXT,
         top_picks_30d TEXT,
         top_picks_180d TEXT,
         model_used    TEXT        DEFAULT 'claude-sonnet-4-6',
@@ -122,12 +122,12 @@ def save_ai_analysis(
     model: str = "claude-sonnet-4-6",
 ) -> None:
     client.table("ai_analysis").upsert({
-        "run_date":       str(run_date),
-        "analysis_text":  analysis_text,
-        "top_picks_5d":   top_picks.get("5d", ""),
-        "top_picks_30d":  top_picks.get("30d", ""),
-        "top_picks_180d": top_picks.get("180d", ""),
-        "model_used":     model,
+        "run_date":        str(run_date),
+        "analysis_text":   analysis_text,
+        "top_picks_1y":    top_picks.get("1y", ""),
+        "top_picks_30d":   top_picks.get("30d", ""),
+        "top_picks_180d":  top_picks.get("180d", ""),
+        "model_used":      model,
     }, on_conflict="run_date").execute()
 
 
