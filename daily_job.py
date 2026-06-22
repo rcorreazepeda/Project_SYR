@@ -928,23 +928,29 @@ def main():
     signal_win_rates:  dict = {}
 
     if db:
-        for tf_key, result in today_results.items():
-            save_screener_run(
-                db, result["df"], tf_key, run_date,
-                result["in_bull"], result["vix_val"], result["breadth_pct"],
-                TIMEFRAMES[tf_key],
-            )
-        print("  Screener picks saved.")
+        try:
+            for tf_key, result in today_results.items():
+                save_screener_run(
+                    db, result["df"], tf_key, run_date,
+                    result["in_bull"], result["vix_val"], result["breadth_pct"],
+                    TIMEFRAMES[tf_key],
+                )
+            print("  Screener picks saved.")
+        except Exception as e:
+            print(f"  [warn] save_screener_run failed: {e}")
 
-        # Check actual outcomes for picks that completed their hold period
-        print("  Checking outcomes for matured picks...")
-        recent_outcomes = check_outcomes(db, data["close"])
+        try:
+            # Check actual outcomes for picks that completed their hold period
+            print("  Checking outcomes for matured picks...")
+            recent_outcomes = check_outcomes(db, data["close"])
 
-        # Compute signal win rates from all resolved picks (last 90 days)
-        resolved_picks = get_picks_with_outcomes(db, days=90)
-        if resolved_picks:
-            signal_win_rates = compute_signal_win_rates(resolved_picks)
-            print(f"  Signal win rates computed from {len(resolved_picks)} resolved picks.")
+            # Compute signal win rates from all resolved picks (last 90 days)
+            resolved_picks = get_picks_with_outcomes(db, days=90)
+            if resolved_picks:
+                signal_win_rates = compute_signal_win_rates(resolved_picks)
+                print(f"  Signal win rates computed from {len(resolved_picks)} resolved picks.")
+        except Exception as e:
+            print(f"  [warn] outcome/win-rate check failed: {e}")
     else:
         print("  [skip] Supabase not configured — skipping save.")
 
@@ -955,8 +961,11 @@ def main():
             tf: ", ".join(today_results[tf]["df"].head(5)["ticker"].tolist())
             for tf in ["1y", "30d", "180d"]
         }
-        save_ai_analysis(db, run_date, analysis, top_picks)
-        print("  AI analysis saved.")
+        try:
+            save_ai_analysis(db, run_date, analysis, top_picks)
+            print("  AI analysis saved.")
+        except Exception as e:
+            print(f"  [warn] save_ai_analysis failed: {e}")
 
     # Print summary to GitHub Actions log
     print("\n" + "="*60)
