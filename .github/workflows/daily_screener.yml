@@ -19,6 +19,7 @@ jobs:
       RESEND_API_KEY:      ${{ secrets.RESEND_API_KEY }}
       ALERT_EMAIL:         ${{ secrets.ALERT_EMAIL }}
       ALERT_EMAIL_SOFIA:   ${{ secrets.ALERT_EMAIL_SOFIA }}
+      FMP_API_KEY:         ${{ secrets.FMP_API_KEY }}
 
     steps:
       - name: Checkout
