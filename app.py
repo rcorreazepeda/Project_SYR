@@ -1274,10 +1274,10 @@ LATEST AI SCREENER INSIGHT:
 
 INSTRUCTIONS:
 1. Recommend 3–5 specific tickers from the screener picks list above
-2. Strongly prefer tickers with high consistency % (≥60%) — they signal sustained momentum, not noise
-3. Avoid tickers already in {owner.title()}'s portfolio unless DCA is clearly justified
-4. Avoid over-concentrating in categories already heavily represented
-5. Allocate ${amount:,.0f} across the picks — amounts must sum exactly to ${amount:,.0f}
+2. Rank purely by signal quality: blended score first, consistency % second
+3. Avoid tickers already in {owner.title()}'s portfolio unless DCA is clearly justified by a strong blended score
+4. Allocate ${amount:,.0f} across the picks — amounts must sum exactly to ${amount:,.0f}
+5. Do NOT let sector overlap or category concentration override signal quality — if the top 3 signals are all in the same sector, pick them anyway and note the concentration as a risk
 6. Be specific and actionable — no vague advice
 
 RESPOND IN THIS EXACT FORMAT (markdown):
@@ -1290,13 +1290,10 @@ RESPOND IN THIS EXACT FORMAT (markdown):
 | TICKER | $X,XXX | XX% | XX% (X/X days) | one-line reason |
 
 ### KEY REASONING
-[One paragraph per pick: why this ticker, what signals support it, how it fits {owner.title()}'s portfolio]
-
-### PORTFOLIO FIT
-[How these picks change the category concentration — what improves, what risk remains]
+[One paragraph per pick: why this ticker, what signals support it]
 
 ### RISKS TO WATCH
-- Risk 1
+- Risk 1 (include concentration risk here if relevant, not as a reason to avoid the pick)
 - Risk 2
 - Risk 3"""
 
